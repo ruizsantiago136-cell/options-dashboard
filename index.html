@@ -193,6 +193,8 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
 ::-webkit-scrollbar-track{background:var(--bg1)}
 ::-webkit-scrollbar-thumb{background:var(--bg5);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--v)}
+/* STOCK row */
+.stock-badge{background:rgba(6,182,212,.12);color:var(--accent);border:1px solid rgba(6,182,212,.3);border-radius:4px;padding:2px 8px;font-size:10px;font-weight:700}
 /* PORTFOLIO */
 .port-outer{border:1px solid var(--bdr);border-top:none;border-radius:0 12px 12px 12px;background:var(--bg1)}
 .port-topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px;border-bottom:1px solid var(--bdr)}
@@ -433,7 +435,8 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
         <div class="sb-sub">Cantidad positiva = compra (long) &mdash; cantidad negativa = venta (short). Prima = precio pagado/cobrado por contrato.</div>
       </div>
       <div class="sb-actions">
-        <button class="btn btn-sm" onclick="addLeg()">+ Agregar pata</button>
+        <button class="btn btn-sm" onclick="addLeg()">+ Agregar opcion</button>
+        <button class="btn btn-sm" onclick="addStockLeg()" style="background:rgba(6,182,212,.1);border-color:var(--accent);color:var(--accent)">&#x1F4C8; Agregar acciones</button>
         <button class="btn btn-sm btn-ghost" onclick="clearLegs()">&#x2715; Limpiar</button>
         <button class="btn btn-sm btn-accent" onclick="stratPreset('bull_call')">Call Spread</button>
         <button class="btn btn-sm btn-accent" onclick="stratPreset('bear_put')">Put Spread</button>
@@ -563,14 +566,10 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
       <button class="btn btn-sm" onclick="openSaveStratModal()">&#x2B; Guardar estrategia activa</button>
-      <button class="btn btn-sm btn-ghost" onclick="clearPortfolio()">&#x1F5D1; Limpiar todo</button>
+      <button class="btn btn-sm btn-ghost" onclick="exportPortfolio()" title="Descargar portfolio como JSON">&#x1F4E5; Exportar</button>
+      <button class="btn btn-sm btn-ghost" onclick="importPortfolio()" title="Cargar portfolio desde JSON">&#x1F4E4; Importar</button>
+      <button class="btn btn-sm btn-ghost" onclick="clearPortfolio()">&#x1F5D1; Limpiar</button>
     </div>
-  </div>
-
-  <!-- Greek exposure summary -->
-  <div class="port-greek-summary" id="portGreekSummary">
-    <div class="pgs-title">Exposici&oacute;n agregada del portfolio</div>
-    <div class="pgs-grid" id="portGreekGrid"></div>
   </div>
 
   <!-- Strategy cards -->
@@ -1371,6 +1370,36 @@ function getExps(){
   return [...new Set(rawData.filter(function(d){return !ticker||d.ticker===ticker;}).map(function(d){return d.expiration;}).filter(Boolean))].sort();
 }
 
+
+function addStockLeg(){
+  var spot=currentData.spot||0;
+  var html='<div class="modal-overlay" id="stockModal" onclick="if(event.target===this)document.getElementById(\'stockModal\').remove()">'
+    +'<div class="modal-box">'
+    +'<div class="modal-title">&#x1F4C8; Agregar acciones</div>'
+    +'<div class="modal-sub">Posición en el subyacente. Positivo = compra, negativo = short.</div>'
+    +'<div class="modal-row"><label>Precio de entrada</label>'
+    +'<input type="number" id="stk_price" value="'+(spot>0?spot.toFixed(2):'')+'" step="0.01"></div>'
+    +'<div class="modal-row"><label>Cantidad</label>'
+    +'<input type="number" id="stk_qty" value="100" step="1" placeholder="+compra / -short"></div>'
+    +'<div class="modal-btns">'
+    +'<button class="btn btn-sm btn-ghost" onclick="document.getElementById(\'stockModal\').remove()">Cancelar</button>'
+    +'<button class="btn btn-sm" onclick="confirmAddStock()">Agregar</button>'
+    +'</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+  setTimeout(function(){var el=document.getElementById('stk_price');if(el)el.focus();},50);
+}
+function confirmAddStock(){
+  var price=parseFloat(document.getElementById('stk_price').value);
+  var qty=parseFloat(document.getElementById('stk_qty').value);
+  if(isNaN(price)||price<=0){alert('Ingresá un precio válido.');return;}
+  if(isNaN(qty)||qty===0){alert('Ingresá una cantidad válida.');return;}
+  var exps=getExps();
+  legCnt++;
+  legs.push({id:legCnt,type:'stock',strike:price,exp:exps[0]||'',qty:qty,premium:price,lot:1,_isStock:true});
+  document.getElementById('stockModal').remove();
+  redrawLegs();
+  renderStrategy();
+}
 function addLeg(p){
   legCnt++;
   const exps=getExps();
@@ -1407,6 +1436,21 @@ function redrawLegs(){
     const netCls=net>=0?'cost-pos':'cost-neg';
     const qtyCls=leg.qty>=0?'qty-pos':'qty-neg';
     const cs=currSym();
+    if(leg._isStock||leg.type==='stock'){
+      var _snet=leg.qty>=0?-(leg.premium*Math.abs(leg.qty)):(leg.premium*Math.abs(leg.qty));
+      var _sc=_snet>=0?'cost-pos':'cost-neg';
+      return '<tr>'
+        +'<td style="padding:5px 8px;color:var(--t3);font-family:var(--mono);font-size:11px">'+(i+1)+'</td>'
+        +'<td colspan="2"><span style="background:rgba(6,182,212,.12);color:var(--accent);border:1px solid rgba(6,182,212,.3);border-radius:4px;padding:2px 7px;font-size:10px;font-weight:700">Acciones</span>'
+        +' <span style="font-family:var(--mono);font-size:11px">@ '+cs+parseFloat(leg.strike).toFixed(2)+'</span></td>'
+        +'<td><span style="color:var(--t3);font-size:10px">'+(currentData.ticker||'')+'</span></td>'
+        +'<td><input type="number" value="'+leg.qty+'" step="1" class="'+qtyCls+'" oninput="this.className=parseFloat(this.value)>=0?\'qty-pos\':\'qty-neg\';updLeg('+leg.id+',\'qty\',this.value)" style="width:80px"></td>'
+        +'<td><span style="color:var(--t2);font-family:var(--mono)">'+cs+parseFloat(leg.premium).toFixed(2)+'</span></td>'
+        +'<td><span style="color:var(--t3)">1</span></td>'
+        +'<td class="cost-cell '+_sc+'">'+(_snet>=0?'+':'')+cs+Math.abs(_snet).toFixed(2)+'</td>'
+        +'<td><button class="leg-del" onclick="removeLeg('+leg.id+')">x</button></td>'
+        +'</tr>';
+    }
     return '<tr>'
       +'<td style="padding:5px 8px;color:var(--t3);font-family:var(--mono);font-size:11px">'+(i+1)+'</td>'
       +'<td><select onchange="updLeg('+leg.id+',\'type\',this.value)">'
@@ -1453,18 +1497,25 @@ function renderStrategy(){
   const rows=prices.map(function(S){
     const varP=(S/spot-1)*100;
     const payExp=legs.reduce(function(sum,leg){
-      const K=leg.strike,qty=leg.qty,prem=leg.premium,lot=leg.lot;
+      const K=parseFloat(leg.strike)||0,qty=leg.qty,prem=leg.premium||0,lot=leg.lot||100;
+      if(leg._isStock||leg.type==='stock') return sum+(S-K)*qty;
       const intr=leg.type==='call'?Math.max(0,S-K):Math.max(0,K-S);
       return sum+(intr-prem)*qty*lot;
     },0);
     const theos=legs.map(function(leg){
+      // Stock leg: theoretical P&L is always linear (S - entry) * qty
+      if(leg._isStock||leg.type==='stock') return (S-parseFloat(leg.strike))*leg.qty;
       const iv=leg.type==='call'?ivc:ivp;
       const T2=Math.max(Trem,1/365);
       const bs=bsCalc(leg.type,S,leg.strike,T2,r,iv);
-      return isNaN(bs.price)?NaN:(bs.price-leg.premium)*leg.qty*leg.lot;
+      return isNaN(bs.price)?NaN:(bs.price-leg.premium)*leg.qty*(leg.lot||100);
     });
     const payBS=theos.some(function(v){return isNaN(v);})?NaN:theos.reduce(function(a,b){return a+b;},0);
     const delta=legs.reduce(function(sum,leg){
+      if(leg._isStock||leg.type==='stock'){
+        // Stock delta = qty (1 share = delta 1)
+        return sum+leg.qty;
+      }
       const iv=leg.type==='call'?ivc:ivp;
       const T2=Math.max(Trem,1/365);
       const bs=bsCalc(leg.type,S,leg.strike,T2,r,iv);
@@ -1671,12 +1722,19 @@ function switchTab(name){
 // MINI PAYOFF for portfolio cards
 // ═══════════════════════════════════════════
 function buildMiniPayoff(strat, cs){
-  // Use current spot, or average of strikes if no spot
-  var spot=currentData.spot||0;
-  if(!spot&&strat.legs.length){
-    spot=strat.legs.reduce(function(s,l){return s+parseFloat(l.strike)||0;},0)/strat.legs.length;
+  // Use spot from the strategy's own ticker in rawData
+  var spot=0;
+  if(strat.ticker&&rawData.length){
+    var sample=rawData.find(function(d){
+      return d.ticker===strat.ticker&&d.spot_price&&parseFloat(d.spot_price)>0;
+    });
+    if(sample) spot=parseFloat(sample.spot_price);
   }
-  if(!spot) return '<tr><td colspan="4" style="padding:6px 8px;color:var(--t3);text-align:center">Sin datos de spot</td></tr>';
+  // Fallback: average of leg strikes
+  if(!spot&&strat.legs.length){
+    spot=strat.legs.reduce(function(s,l){return s+(parseFloat(l.strike)||0);},0)/strat.legs.length;
+  }
+  if(!spot) return '<tr><td colspan="4" style="padding:6px 8px;color:var(--t3);text-align:center">Sin datos de spot para '+strat.ticker+'</td></tr>';
 
   var range=0.20; // ±20%
   var steps=9;    // 9 price points
@@ -1741,11 +1799,46 @@ function reloadStratIntoBuilder(stratId){
 var portfolio=[];
 
 function loadPortfolioFromStorage(){
-  try{var s=localStorage.getItem('optchain_portfolio');if(s)portfolio=JSON.parse(s);}
-  catch(e){portfolio=[];}
+  // Try localStorage first, then sessionStorage
+  try{
+    var s=localStorage.getItem('optchain_portfolio');
+    if(s){portfolio=JSON.parse(s);return;}
+  }catch(e){}
+  try{
+    var s2=sessionStorage.getItem('optchain_portfolio');
+    if(s2) portfolio=JSON.parse(s2);
+  }catch(e){portfolio=[];}
 }
 function savePortfolioToStorage(){
-  try{localStorage.setItem('optchain_portfolio',JSON.stringify(portfolio));}catch(e){}
+  // Try localStorage, fall back to sessionStorage (works on file://)
+  var data=JSON.stringify(portfolio);
+  try{localStorage.setItem('optchain_portfolio',data);return;}catch(e){}
+  try{sessionStorage.setItem('optchain_portfolio',data);}catch(e){}
+}
+function exportPortfolio(){
+  var blob=new Blob([JSON.stringify(portfolio,null,2)],{type:'application/json'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);
+  a.download='portfolio_optchain.json';
+  a.click();
+}
+function importPortfolio(){
+  var inp=document.createElement('input');
+  inp.type='file';inp.accept='.json';
+  inp.onchange=function(){
+    var file=inp.files[0];if(!file)return;
+    var reader=new FileReader();
+    reader.onload=function(e){
+      try{
+        var data=JSON.parse(e.target.result);
+        if(Array.isArray(data)){portfolio=data;savePortfolioToStorage();renderPortfolio();
+          alert('Portfolio importado: '+data.length+' estrategia(s).');}
+        else alert('Archivo inválido.');
+      }catch(ex){alert('Error leyendo archivo: '+ex.message);}
+    };
+    reader.readAsText(file);
+  };
+  inp.click();
 }
 
 function openSaveStratModal(){
@@ -1773,7 +1866,8 @@ function confirmSaveStrat(){
     return{id:l.id,type:l.type,strike:l.strike,exp:l.exp,qty:l.qty,
       premium:l.premium,lot:l.lot,ticker:currentData.ticker||'',
       currency:currentData.currency||'USD',
-      openPrice:l.premium,status:'open',closePrice:null,closedAt:null};
+      openPrice:l.premium,status:'open',closePrice:null,closedAt:null,
+      _isStock:l._isStock||false};
   });
   portfolio.push({
     id:Date.now(),name:name,notes:notes,
@@ -1902,26 +1996,66 @@ function renderPortfolio(){
   if(empty) empty.style.display='none';
 
   // Aggregate greeks + PnL
-  var ag={delta:0,gamma:0,vega:0,theta:0};
   var totalPnL=0,pnlValid=true;
   portfolio.forEach(function(strat){
-    var g=calcStratGreeks(strat);
-    ag.delta+=g.delta;ag.gamma+=g.gamma;ag.vega+=g.vega;ag.theta+=g.theta;
     strat.legs.forEach(function(leg){
       var r=calcLegPnL(leg);
       if(isNaN(r.pnl)) pnlValid=false; else totalPnL+=r.pnl;
     });
   });
-  renderPortGreeks(ag,totalPnL,pnlValid);
-
-  if(!cards) return;
+  renderPortGreeks();
   cards.innerHTML=portfolio.map(function(strat){
-    var g=calcStratGreeks(strat);
     var sPnL=0,sPnLValid=true;
     strat.legs.forEach(function(leg){var r=calcLegPnL(leg);if(isNaN(r.pnl))sPnLValid=false;else sPnL+=r.pnl;});
     var pnlClr=sPnL>=0?'var(--g2)':'var(--r2)';
     var cs=strat.currency==='ARS'?'$AR ':'$';
     var openCount=strat.legs.filter(function(l){return l.status==='open';}).length;
+    // Spot from this strategy's own ticker in rawData
+    var stratSpot=0;
+    if(strat.ticker&&rawData.length){
+      var _sp=rawData.find(function(d){return d.ticker===strat.ticker&&parseFloat(d.spot_price)>0;});
+      if(_sp) stratSpot=parseFloat(_sp.spot_price);
+    }
+    if(!stratSpot&&strat.legs.length)
+      stratSpot=strat.legs.reduce(function(s,l){return s+(parseFloat(l.strike)||0);},0)/strat.legs.length;
+    // Mini payoff rows
+    var miniPayoffRows=(function(){
+      if(!stratSpot) return '<tr><td colspan="4" style="padding:6px 8px;color:var(--t3);text-align:center">Sin spot para '+strat.ticker+'</td></tr>';
+      var rng=0.20,steps=9,rows='';
+      var maxPay=0;
+      var pays=[];
+      for(var _i=0;_i<steps;_i++){
+        var _S=stratSpot*(1-rng)+stratSpot*2*rng*_i/(steps-1);
+        var _pay=strat.legs.reduce(function(sum,leg){
+          var _K=parseFloat(leg.strike),_q=leg.qty,_pr=leg.openPrice,_lot=leg.lot||100;
+          if(leg.type==='stock'){return sum+(_S-_K)*_q;}
+          var _intr=leg.type==='call'?Math.max(0,_S-_K):Math.max(0,_K-_S);
+          return sum+(_intr-_pr)*_q*_lot;
+        },0);
+        pays.push({S:_S,pay:_pay});
+        if(Math.abs(_pay)>maxPay) maxPay=Math.abs(_pay);
+      }
+      pays.forEach(function(pt){
+        var _S=pt.S,_pay=pt.pay;
+        var _var=(_S/stratSpot-1)*100;
+        var _isCurr=Math.abs(_S-stratSpot)<stratSpot*2*rng/(steps-1)*0.55;
+        var _bg=_isCurr?'background:rgba(6,182,212,.1);':'';
+        var _pc=_pay>=0?'var(--g2)':'var(--r2)';
+        var _sp=stratSpot>500?_S.toFixed(0):_S.toFixed(2);
+        var _barW=maxPay>0?Math.round(Math.min(100,Math.abs(_pay)/maxPay*100)):0;
+        rows+='<tr style="'+_bg+'border-bottom:1px solid rgba(255,255,255,.02)">'
+          +'<td style="padding:3px 8px;text-align:left;color:'+(_isCurr?'var(--accent)':'var(--t)')+(_isCurr?';font-weight:700':'')+'">'+cs+_sp+'</td>'
+          +'<td style="padding:3px 8px;text-align:left;color:'+(_var>=0?'var(--g2)':'var(--r2)')+'">'+(_var>=0?'+':'')+_var.toFixed(1)+'%</td>'
+          +'<td style="padding:3px 8px;text-align:right;font-weight:'+(_isCurr?'700':'400')+';color:'+_pc+'">'+(_pay>=0?'+':'')+cs+_pay.toFixed(2)+'</td>'
+          +'<td style="padding:3px 8px;text-align:right">'
+            +'<div style="height:5px;background:var(--bg4);border-radius:3px;width:70px;display:inline-block;vertical-align:middle">'
+              +'<div style="height:100%;border-radius:3px;background:'+_pc+';width:'+_barW+'%"></div>'
+            +'</div>'
+          +'</td>'
+          +'</tr>';
+      });
+      return rows;
+    })();
 
     var legsHtml=strat.legs.map(function(leg){
       var r=calcLegPnL(leg);
@@ -1946,13 +2080,6 @@ function renderPortfolio(){
         +'</tr>';
     }).join('');
 
-    var greeksHtml=g.valid>0
-      ?'<div class="sc-pnl-row"><span class="sc-pnl-label">Delta</span><span style="color:#93c5fd">'+(g.delta>=0?'+':'')+g.delta.toFixed(3)+'</span></div>'
-       +'<div class="sc-pnl-row"><span class="sc-pnl-label">Gamma</span><span style="color:#c4b5fd">'+(g.gamma>=0?'+':'')+g.gamma.toFixed(4)+'</span></div>'
-       +'<div class="sc-pnl-row"><span class="sc-pnl-label">Vega</span><span style="color:#6ee7b7">'+(g.vega>=0?'+':'')+g.vega.toFixed(3)+'</span></div>'
-       +'<div class="sc-pnl-row"><span class="sc-pnl-label">Theta / dia</span><span style="color:#fdba74">'+(g.theta>=0?'+':'')+g.theta.toFixed(4)+'</span></div>'
-      :'<div style="color:var(--t3);font-size:11px;padding:6px 0">Cargar el ticker/exp del mercado para calcular griegas en tiempo real.</div>';
-
     return '<div class="strat-card">'
       +'<div class="strat-card-header">'
         +'<div>'
@@ -1962,44 +2089,23 @@ function renderPortfolio(){
         +'</div>'
         +'<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
           +'<span style="font-size:12px;font-family:var(--mono);font-weight:700;color:'+pnlClr+'">'
-            +'P&amp;L: '+(sPnLValid?(sPnL>=0?'+':'')+cs+sPnL.toFixed(2):'pendiente')
+            +'P&L: '+(sPnLValid?(sPnL>=0?'+':'')+cs+sPnL.toFixed(2):'pendiente')
           +'</span>'
           +'<span style="font-size:10px;color:var(--t3)">'+openCount+'/'+strat.legs.length+' abiertas</span>'
           +'<button class="btn btn-sm btn-accent" style="padding:3px 10px" onclick="reloadStratIntoBuilder('+strat.id+')" title="Cargar en simulador">&#x21BA; Simular</button>'
           +'<button class="btn btn-sm btn-ghost" style="padding:3px 8px" onclick="deleteStrat('+strat.id+')">&#x2715;</button>'
         +'</div>'
       +'</div>'
-      +'<div class="strat-card-body">'
-        +'<div class="sc-pnl-box">'
-          +'<div class="sc-pnl-title">Griegas (patas abiertas)</div>'
-          +greeksHtml
-        +'</div>'
-        +'<div class="sc-pnl-box">'
-          +'<div class="sc-pnl-title">Resumen P&amp;L</div>'
-          +'<div class="sc-pnl-row"><span class="sc-pnl-label">P&amp;L estimado</span>'
-            +'<span style="color:'+pnlClr+'">'+(sPnLValid?(sPnL>=0?'+':'')+cs+sPnL.toFixed(2):'datos pendientes')+'</span>'
-          +'</div>'
-          +'<div class="sc-pnl-row"><span class="sc-pnl-label">Estado</span>'
-            +'<span>'+(strat.status==='open'?'<span class="status-open">ABIERTA</span>':'<span class="status-closed">CERRADA</span>')+'</span>'
-          +'</div>'
-          +'<div class="sc-pnl-row"><span class="sc-pnl-label">Patas abiertas</span>'
-            +'<span style="color:var(--g2)">'+openCount+' / '+strat.legs.length+'</span>'
-          +'</div>'
-          +'<div class="sc-pnl-row"><span class="sc-pnl-label">Moneda</span>'
-            +'<span style="color:var(--accent)">'+strat.currency+'</span>'
-          +'</div>'
-        +'</div>'
-      +'</div>'
       +'<div style="padding:0 14px 12px">'
-        +'<div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin-bottom:8px">Payoff a vencimiento</div>'
-        +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--mono);min-width:360px">'
+        +'<div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin:12px 0 8px">Payoff a vencimiento &mdash; '+strat.ticker+' spot: '+cs+(stratSpot>0?stratSpot.toLocaleString('es-AR',{maximumFractionDigits:0}):'?')+'</div>'
+        +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--mono);min-width:380px">'
           +'<thead><tr>'
             +'<th style="padding:3px 8px;text-align:left;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Precio</th>'
             +'<th style="padding:3px 8px;text-align:left;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Var%</th>'
-            +'<th style="padding:3px 8px;text-align:right;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">P&amp;L Vcto</th>'
-            +'<th style="padding:3px 8px;text-align:right;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Var$</th>'
+            +'<th style="padding:3px 8px;text-align:right;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">P&L Vto</th>'
+            +'<th style="padding:3px 8px;text-align:right;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Barra</th>'
           +'</tr></thead>'
-          +'<tbody>'+buildMiniPayoff(strat,cs)+'</tbody>'
+          +'<tbody>'+miniPayoffRows+'</tbody>'
         +'</table></div>'
       +'</div>'
       +'<div style="padding:0 14px 14px">'
@@ -2008,7 +2114,7 @@ function renderPortfolio(){
             +'<thead><tr>'
               +'<th>Lado</th><th>Tipo</th><th>Strike</th><th>Vto</th>'
               +'<th>Qty</th><th>Entrada</th><th>Precio act.</th>'
-              +'<th>P&amp;L</th><th>Estado</th><th>Accion</th>'
+              +'<th>P&L</th><th>Estado</th><th>Accion</th>'
             +'</tr></thead>'
             +'<tbody>'+legsHtml+'</tbody>'
           +'</table>'
@@ -2018,26 +2124,7 @@ function renderPortfolio(){
   }).join('');
 }
 
-function renderPortGreeks(g,totalPnL,valid){
-  var grid=document.getElementById('portGreekGrid');
-  if(!grid) return;
-  var cs=currentData.currency==='ARS'?'$AR ':'$';
-  var hasG=g&&typeof g.delta!=='undefined';
-  var cards=[
-    {lbl:'Delta portfolio',val:hasG?(g.delta>=0?'+':'')+g.delta.toFixed(3):'-',c:'#93c5fd'},
-    {lbl:'Gamma portfolio',val:hasG?(g.gamma>=0?'+':'')+g.gamma.toFixed(4):'-',c:'#c4b5fd'},
-    {lbl:'Vega portfolio',val:hasG?(g.vega>=0?'+':'')+g.vega.toFixed(3):'-',c:'#6ee7b7'},
-    {lbl:'Theta /dia',val:hasG?(g.theta>=0?'+':'')+g.theta.toFixed(4):'-',c:'#fdba74'},
-    {lbl:'P&L total estimado',val:valid&&!isNaN(totalPnL)?(totalPnL>=0?'+':'')+cs+totalPnL.toFixed(2):'-',
-      c:valid&&!isNaN(totalPnL)?(totalPnL>=0?'var(--g2)':'var(--r2)'):'var(--t3)'},
-    {lbl:'Estrategias activas',val:String(portfolio.filter(function(s){return s.status==='open';}).length),c:'var(--vb)'},
-    {lbl:'Estrategias cerradas',val:String(portfolio.filter(function(s){return s.status==='closed';}).length),c:'var(--t3)'},
-  ];
-  grid.innerHTML=cards.map(function(c){
-    return '<div class="pgs-card"><div class="pgs-lbl">'+c.lbl+'</div>'
-      +'<div class="pgs-val" style="color:'+c.c+'">'+c.val+'</div></div>';
-  }).join('');
-}
+function renderPortGreeks(){/* greeks not aggregated across underlyings */}
 
 // ════════════════════════════════════════════
 // OPPORTUNITIES ENGINE
