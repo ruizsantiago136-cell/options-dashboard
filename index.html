@@ -240,7 +240,17 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
 /* OPPORTUNITIES */
 .opp-outer{border:1px solid var(--bdr);border-top:none;border-radius:0 12px 12px 12px;background:var(--bg1)}
 .opp-topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px;border-bottom:1px solid var(--bdr)}
-.opp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:12px;padding:16px}
+.opp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px;padding:16px}
+.cc-panel{border-left:1px solid var(--bdr);padding:16px;min-width:0}
+.cc-title{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--gold2);margin-bottom:4px}
+.cc-sub{font-size:10px;color:var(--t3);margin-bottom:12px;line-height:1.4}
+.cc-tbl{width:100%;border-collapse:collapse;font-size:11px}
+.cc-tbl th{padding:5px 8px;font-size:9px;text-transform:uppercase;letter-spacing:.05em;color:var(--t3);font-family:var(--sans);text-align:right;border-bottom:1px solid var(--bdr);background:var(--bg3)}
+.cc-tbl th:first-child{text-align:left}
+.cc-tbl td{padding:5px 8px;font-family:var(--mono);border-bottom:1px solid rgba(255,255,255,.025);text-align:right;color:var(--t2)}
+.cc-tbl td:first-child{text-align:left;color:var(--t)}
+.cc-best td{background:rgba(245,158,11,.07)}
+.cc-best td:first-child{color:var(--gold2);font-weight:700}
 .opp-card{background:var(--bg2);border:1px solid var(--bdr);border-radius:10px;padding:14px;position:relative;overflow:hidden;transition:border-color .15s}
 .opp-card:hover{border-color:var(--bdr2)}
 .opp-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px}
@@ -595,6 +605,12 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
 
   <div id="oppGrid" class="opp-grid">
     <div style="text-align:center;padding:50px;color:var(--t3);font-size:13px">Cargando datos para analizar&hellip;</div>
+  </div>
+
+  <div style="border-top:1px solid var(--bdr);padding:16px">
+    <div class="cc-title">&#x1F4B0; Cash &amp; Carry Sint&eacute;tico</div>
+    <div class="cc-sub">Compra 100 acciones + Compra Put + Venta Call (mismo strike y vto). Garantiza recibir K al vencimiento. Solo muestra filas con TNA &gt; tasa libre de riesgo.</div>
+    <div id="ccTable"><div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Seleccion&aacute; un ticker y vencimiento.</div></div>
   </div>
 
 </div>
@@ -2081,6 +2097,7 @@ function renderPortfolio(){
         var bs=bsCalc(leg.type,stratSpot,parseFloat(leg.strike),T,r2,iv);
         if(isNaN(bs.delta)) return;
         var mult=leg.qty*(leg.lot||100);
+        // mult sign: positive=long, negative=short — this is correct
         totD+=bs.delta*mult;totG+=bs.gamma*mult;
         totV+=bs.vega*mult;totTh+=bs.theta*mult;
         valid++;
@@ -2091,18 +2108,30 @@ function renderPortfolio(){
       });
       return{delta:totD,gamma:totG,vega:totV,theta:totTh,valid:valid};
     })();
-    var gHtml=stratGreeks.valid>0
-      ?'<div style="display:flex;gap:16px;flex-wrap:wrap;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);font-family:var(--mono);font-size:11px">'
-        +'<span style="color:var(--t3)">Griegas</span>'
-        +'<span title="Delta"><span style="color:var(--t3)">Δ </span><span style="color:#93c5fd;font-weight:700">'+(stratGreeks.delta>=0?'+':'')+stratGreeks.delta.toFixed(3)+'</span></span>'
-        +'<span title="Gamma"><span style="color:var(--t3)">Γ </span><span style="color:#c4b5fd;font-weight:700">'+(stratGreeks.gamma>=0?'+':'')+stratGreeks.gamma.toFixed(4)+'</span></span>'
-        +'<span title="Vega"><span style="color:var(--t3)">ν </span><span style="color:#6ee7b7;font-weight:700">'+(stratGreeks.vega>=0?'+':'')+stratGreeks.vega.toFixed(3)+'</span></span>'
-        +'<span title="Theta/día"><span style="color:var(--t3)">Θ </span><span style="color:#fdba74;font-weight:700">'+(stratGreeks.theta>=0?'+':'')+stratGreeks.theta.toFixed(4)+'/d</span></span>'
-        +'<span style="color:var(--t3);font-size:9px">(patas abiertas con IV de mercado)</span>'
-      +'</div>'
-      :(stratSpot>0
-        ?'<div style="padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);font-size:10px;color:var(--t3)">Griegas no disponibles — cargá el ticker <strong>'+strat.ticker+'</strong> en la cadena para calcularlas.</div>'
-        :'');
+    // Count open option legs (non-stock)
+    var openOptLegs=strat.legs.filter(function(l){return l.status==='open'&&!l._isStock&&l.type!=='stock';}).length;
+    var gHtml='';
+    if(openOptLegs>0){
+      if(stratGreeks.valid>0){
+        gHtml='<div style="display:flex;gap:0;flex-wrap:wrap;background:var(--bg2);border-bottom:1px solid var(--bdr)">'
+          +'<div style="padding:8px 14px;border-right:1px solid var(--bdr);min-width:60px">'
+            +'<div style="font-size:9px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Griegas netas</div>'
+            +'<div style="font-size:9px;color:var(--t3)">patas abiertas &middot; long+ short&minus;</div>'
+          +'</div>'
+          +'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 14px;align-items:center;font-family:var(--mono);font-size:12px">'
+            +'<span><span style="color:var(--t3);font-size:10px">&Delta; Delta </span><span style="color:#93c5fd;font-weight:700">'+(stratGreeks.delta>=0?'+':'')+stratGreeks.delta.toFixed(3)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&Gamma; Gamma </span><span style="color:#c4b5fd;font-weight:700">'+(stratGreeks.gamma>=0?'+':'')+stratGreeks.gamma.toFixed(4)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&nu; Vega </span><span style="color:#6ee7b7;font-weight:700">'+(stratGreeks.vega>=0?'+':'')+stratGreeks.vega.toFixed(3)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&Theta; Theta/d </span><span style="color:#fdba74;font-weight:700">'+(stratGreeks.theta>=0?'+':'')+stratGreeks.theta.toFixed(4)+'</span></span>'
+          +'</div>'
+        +'</div>';
+      } else {
+        gHtml='<div style="padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);font-size:10px;color:var(--t3)">'
+          +'Griegas no disponibles — cargá el ticker <strong>'+strat.ticker+'</strong> en la cadena y vencimiento para calcularlas.'
+          +'</div>';
+      }
+    }
+
 
     var legsHtml=strat.legs.map(function(leg){
       var r=calcLegPnL(leg);
@@ -2179,6 +2208,89 @@ function renderPortGreeks(){/* greeks not aggregated across underlyings */}
 // ════════════════════════════════════════════
 var oppLegsStore=[];
 
+function renderCashCarry(){
+  var el=document.getElementById('ccTable');
+  if(!el) return;
+  var calls=currentData.calls,puts=currentData.puts,spot=currentData.spot;
+  var strikes=currentData.strikes,exp=currentData.exp,dte=currentData.dte||calcDTE(currentData.exp)||1;
+  var rf=getRF(); // risk-free rate as decimal
+  var cs=currSym();
+
+  if(!spot||!strikes.length||!exp){
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Seleccion\u00e1 un ticker y vencimiento.</div>';
+    return;
+  }
+
+  var cm={};calls.forEach(function(d){cm[d._sk]=d;});
+  var pm={};puts.forEach(function(d){pm[d._sk]=d;});
+
+  function getMid(d){
+    if(!d) return null;
+    var b=parseFloat(d.bid),a=parseFloat(d.ask),lp=parseFloat(d.lastPrice);
+    if(!isNaN(b)&&!isNaN(a)&&b>0&&a>0) return(b+a)/2;
+    if(!isNaN(lp)&&lp>0) return lp;
+    return null;
+  }
+
+  var rows=[];
+  strikes.forEach(function(K){
+    var c=cm[K],p=pm[K];
+    if(!c||!p) return;
+    var callP=getMid(c),putP=getMid(p);
+    if(callP===null||putP===null) return;
+    // Costo = Stock - Call + Put
+    var costo=spot-callP+putP;
+    if(costo<=0) return;
+    // Rendimiento total = K/Costo - 1
+    var rend=(K/costo)-1;
+    // TNA = rend * 365/dte
+    var tna=rend*(365/dte);
+    // Only show if TNA > risk-free rate
+    if(tna<=rf) return;
+    rows.push({K:K,costo:costo,rend:rend,tna:tna,callP:callP,putP:putP});
+  });
+
+  if(!rows.length){
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Ning\u00fan strike supera la TLR ('+(rf*100).toFixed(2)+'%). Mercado bien arbitrado.</div>';
+    return;
+  }
+
+  // Sort by TNA descending
+  rows.sort(function(a,b){return b.tna-a.tna;});
+  var best=rows[0].tna;
+
+  var rowsHtml=rows.map(function(row,i){
+    var cls=i===0?'cc-best':'';
+    var isBig=spot>500;
+    return '<tr class="'+cls+'">'+
+      '<td>'+cs+(isBig?row.K.toFixed(0):row.K.toFixed(2))+'</td>'+
+      '<td>'+cs+(isBig?row.costo.toFixed(0):row.costo.toFixed(2))+'</td>'+
+      '<td>'+cs+(isBig?row.callP.toFixed(0):row.callP.toFixed(2))+'</td>'+
+      '<td>'+cs+(isBig?row.putP.toFixed(0):row.putP.toFixed(2))+'</td>'+
+      '<td>'+(row.rend*100).toFixed(2)+'%</td>'+
+      '<td style="color:'+(row.tna>=best*0.95?'var(--gold2)':'var(--g2)')+';font-weight:700">'+
+        (row.tna*100).toFixed(2)+'%'+
+      '</td>'+
+    '</tr>';
+  }).join('');
+
+  el.innerHTML='<table class="cc-tbl">'+
+    '<thead><tr>'+
+      '<th>Strike</th>'+
+      '<th>Costo</th>'+
+      '<th>Call</th>'+
+      '<th>Put</th>'+
+      '<th>Rdto</th>'+
+      '<th>TNA</th>'+
+    '</tr></thead>'+
+    '<tbody>'+rowsHtml+'</tbody>'+
+  '</table>'+
+  '<div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">'+
+    'TLR ref: '+(rf*100).toFixed(2)+'% \u00b7 DTE: '+dte+' \u00b7 '+
+    'Fila dorada = mejor TNA. Precios: mid bid/ask o \u00faltimo negociado.'+
+  '</div>';
+}
+
 function runOpportunities(){
   var grid=document.getElementById('oppGrid');
   if(!grid) return;
@@ -2187,6 +2299,7 @@ function runOpportunities(){
     return;
   }
   grid.innerHTML='<div style="text-align:center;padding:30px;color:var(--t3);font-size:13px">Analizando...</div>';
+  renderCashCarry();
   setTimeout(function(){
     var opps=detectOpportunities();
     if(!opps.length){
