@@ -2057,6 +2057,53 @@ function renderPortfolio(){
       return rows;
     })();
 
+    // ── Per-strategy greeks (uses rawData IV + stratSpot) ──
+    var stratGreeks=(function(){
+      var totD=0,totG=0,totV=0,totTh=0,valid=0;
+      var r2=strat.currency==='ARS'?0.188:0.035;
+      strat.legs.forEach(function(leg){
+        if(leg.status==='closed'||leg._isStock||leg.type==='stock') return;
+        // Get IV from rawData for this leg
+        var d=rawData.find(function(r){
+          return r.ticker===strat.ticker&&r.type===leg.type
+            &&Math.abs(parseFloat(r.strike)-parseFloat(leg.strike))<0.01
+            &&r.expiration===leg.exp;
+        });
+        var iv=d?parseFloat(d.impliedVolatility):NaN;
+        if(isNaN(iv)||iv<=0.001) return;
+        // Get T from rawData or calculate
+        var T=0;
+        var ggalSample=rawData.find(function(x){return x.ticker==='GGAL'&&x._tYears>0;});
+        if(strat.ticker==='GGAL'&&ggalSample) T=Math.max(0.5/365,ggalSample._tYears);
+        else T=calcT(leg.exp);
+        if(T<=0) return;
+        if(!stratSpot) return;
+        var bs=bsCalc(leg.type,stratSpot,parseFloat(leg.strike),T,r2,iv);
+        if(isNaN(bs.delta)) return;
+        var mult=leg.qty*(leg.lot||100);
+        totD+=bs.delta*mult;totG+=bs.gamma*mult;
+        totV+=bs.vega*mult;totTh+=bs.theta*mult;
+        valid++;
+      });
+      // Add stock delta
+      strat.legs.forEach(function(leg){
+        if(leg._isStock||leg.type==='stock') totD+=leg.qty;
+      });
+      return{delta:totD,gamma:totG,vega:totV,theta:totTh,valid:valid};
+    })();
+    var gHtml=stratGreeks.valid>0
+      ?'<div style="display:flex;gap:16px;flex-wrap:wrap;padding:8px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);font-family:var(--mono);font-size:11px">'
+        +'<span style="color:var(--t3)">Griegas</span>'
+        +'<span title="Delta"><span style="color:var(--t3)">Δ </span><span style="color:#93c5fd;font-weight:700">'+(stratGreeks.delta>=0?'+':'')+stratGreeks.delta.toFixed(3)+'</span></span>'
+        +'<span title="Gamma"><span style="color:var(--t3)">Γ </span><span style="color:#c4b5fd;font-weight:700">'+(stratGreeks.gamma>=0?'+':'')+stratGreeks.gamma.toFixed(4)+'</span></span>'
+        +'<span title="Vega"><span style="color:var(--t3)">ν </span><span style="color:#6ee7b7;font-weight:700">'+(stratGreeks.vega>=0?'+':'')+stratGreeks.vega.toFixed(3)+'</span></span>'
+        +'<span title="Theta/día"><span style="color:var(--t3)">Θ </span><span style="color:#fdba74;font-weight:700">'+(stratGreeks.theta>=0?'+':'')+stratGreeks.theta.toFixed(4)+'/d</span></span>'
+        +'<span style="color:var(--t3);font-size:9px">(patas abiertas con IV de mercado)</span>'
+      +'</div>'
+      :(stratSpot>0
+        ?'<div style="padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);font-size:10px;color:var(--t3)">Griegas no disponibles — cargá el ticker <strong>'+strat.ticker+'</strong> en la cadena para calcularlas.</div>'
+        :'');
+
     var legsHtml=strat.legs.map(function(leg){
       var r=calcLegPnL(leg);
       var cpStr=r.currentPrice!==null?cs+r.currentPrice.toFixed(2):'-';
@@ -2096,6 +2143,7 @@ function renderPortfolio(){
           +'<button class="btn btn-sm btn-ghost" style="padding:3px 8px" onclick="deleteStrat('+strat.id+')">&#x2715;</button>'
         +'</div>'
       +'</div>'
+      +gHtml
       +'<div style="padding:0 14px 12px">'
         +'<div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin:12px 0 8px">Payoff a vencimiento &mdash; '+strat.ticker+' spot: '+cs+(stratSpot>0?stratSpot.toLocaleString('es-AR',{maximumFractionDigits:0}):'?')+'</div>'
         +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--mono);min-width:380px">'
