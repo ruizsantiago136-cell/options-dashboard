@@ -2076,10 +2076,22 @@ function renderPortfolio(){
     // ── Per-strategy greeks (uses rawData IV + stratSpot) ──
     var stratGreeks=(function(){
       var totD=0,totG=0,totV=0,totTh=0,valid=0;
-      var r2=strat.currency==='ARS'?0.188:0.035;
+      var legDetails=[];
+      // Use same rate as chain: getRF reads user input or defaults by ticker
+      // Temporarily simulate getRF for this strategy's ticker
+      var _rfInput=document.getElementById('rfRate').value;
+      var r2;
+      if(_rfInput!==''&&_rfInput!==null&&_rfInput.trim()!==''){
+        r2=parseFloat(_rfInput)/100;
+      } else if(strat.ticker==='GGAL'){
+        var _tlrSample=rawData.find(function(d){return d.ticker==='GGAL'&&d._tlr;});
+        r2=_tlrSample?_tlrSample._tlr:0.188;
+      } else {
+        r2=0.035;
+      }
+      var ggalSample=rawData.find(function(x){return x.ticker==='GGAL'&&x._tYears>0;});
       strat.legs.forEach(function(leg){
         if(leg.status==='closed'||leg._isStock||leg.type==='stock') return;
-        // Get IV from rawData for this leg
         var d=rawData.find(function(r){
           return r.ticker===strat.ticker&&r.type===leg.type
             &&Math.abs(parseFloat(r.strike)-parseFloat(leg.strike))<0.01
@@ -2087,53 +2099,98 @@ function renderPortfolio(){
         });
         var iv=d?parseFloat(d.impliedVolatility):NaN;
         if(isNaN(iv)||iv<=0.001) return;
-        // Get T from rawData or calculate
         var T=0;
-        var ggalSample=rawData.find(function(x){return x.ticker==='GGAL'&&x._tYears>0;});
         if(strat.ticker==='GGAL'&&ggalSample) T=Math.max(0.5/365,ggalSample._tYears);
         else T=calcT(leg.exp);
-        if(T<=0) return;
-        if(!stratSpot) return;
+        if(T<=0||!stratSpot) return;
         var bs=bsCalc(leg.type,stratSpot,parseFloat(leg.strike),T,r2,iv);
         if(isNaN(bs.delta)) return;
-        var mult=leg.qty*(leg.lot||100);
-        // mult sign: positive=long, negative=short — this is correct
-        totD+=bs.delta*mult;totG+=bs.gamma*mult;
-        totV+=bs.vega*mult;totTh+=bs.theta*mult;
+        // Multiply only by qty (contracts): +long, -short. No lot.
+        // Matches the chain which shows greeks per contract.
+        var q=leg.qty;
+        totD+=bs.delta*q;
+        totG+=bs.gamma*q;
+        totV+=bs.vega*q;
+        totTh+=bs.theta*q;
         valid++;
+        legDetails.push({
+          side:q>0?'LONG':'SHORT',
+          type:leg.type.toUpperCase(),
+          strike:parseFloat(leg.strike),
+          qty:Math.abs(q),
+          delta:(bs.delta*q),
+          gamma:(bs.gamma*q),
+          vega:(bs.vega*q),
+          theta:(bs.theta*q),
+          iv:(iv*100).toFixed(1)
+        });
       });
-      // Add stock delta
+      // Stock: each share contributes delta=1
       strat.legs.forEach(function(leg){
-        if(leg._isStock||leg.type==='stock') totD+=leg.qty;
+        if((leg._isStock||leg.type==='stock')&&leg.status!=='closed') totD+=leg.qty;
       });
-      return{delta:totD,gamma:totG,vega:totV,theta:totTh,valid:valid};
+      return{delta:totD,gamma:totG,vega:totV,theta:totTh,valid:valid,legs:legDetails};
     })();
     // Count open option legs (non-stock)
     var openOptLegs=strat.legs.filter(function(l){return l.status==='open'&&!l._isStock&&l.type!=='stock';}).length;
     var gHtml='';
     if(openOptLegs>0){
       if(stratGreeks.valid>0){
-        gHtml='<div style="display:flex;gap:0;flex-wrap:wrap;background:var(--bg2);border-bottom:1px solid var(--bdr)">'
-          +'<div style="padding:8px 14px;border-right:1px solid var(--bdr);min-width:60px">'
+        // ── Summary row ──
+        var gSummary='<div style="display:flex;gap:0;flex-wrap:wrap;background:var(--bg2);border-bottom:1px solid var(--bdr)">'
+          +'<div style="padding:8px 14px;border-right:1px solid var(--bdr)">'
             +'<div style="font-size:9px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px">Griegas netas</div>'
-            +'<div style="font-size:9px;color:var(--t3)">patas abiertas &middot; long+ short&minus;</div>'
+            +'<div style="font-size:9px;color:var(--t3)">long+ / short&minus; &middot; por contrato</div>'
           +'</div>'
           +'<div style="display:flex;gap:20px;flex-wrap:wrap;padding:8px 14px;align-items:center;font-family:var(--mono);font-size:12px">'
-            +'<span><span style="color:var(--t3);font-size:10px">&Delta; Delta </span><span style="color:#93c5fd;font-weight:700">'+(stratGreeks.delta>=0?'+':'')+stratGreeks.delta.toFixed(3)+'</span></span>'
-            +'<span><span style="color:var(--t3);font-size:10px">&Gamma; Gamma </span><span style="color:#c4b5fd;font-weight:700">'+(stratGreeks.gamma>=0?'+':'')+stratGreeks.gamma.toFixed(4)+'</span></span>'
-            +'<span><span style="color:var(--t3);font-size:10px">&nu; Vega </span><span style="color:#6ee7b7;font-weight:700">'+(stratGreeks.vega>=0?'+':'')+stratGreeks.vega.toFixed(3)+'</span></span>'
-            +'<span><span style="color:var(--t3);font-size:10px">&Theta; Theta/d </span><span style="color:#fdba74;font-weight:700">'+(stratGreeks.theta>=0?'+':'')+stratGreeks.theta.toFixed(4)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&Delta; </span><span style="color:#93c5fd;font-weight:700">'+(stratGreeks.delta>=0?'+':'')+stratGreeks.delta.toFixed(4)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&Gamma; </span><span style="color:#c4b5fd;font-weight:700">'+(stratGreeks.gamma>=0?'+':'')+stratGreeks.gamma.toFixed(5)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&nu; </span><span style="color:#6ee7b7;font-weight:700">'+(stratGreeks.vega>=0?'+':'')+stratGreeks.vega.toFixed(4)+'</span></span>'
+            +'<span><span style="color:var(--t3);font-size:10px">&Theta;/d </span><span style="color:#fdba74;font-weight:700">'+(stratGreeks.theta>=0?'+':'')+stratGreeks.theta.toFixed(5)+'</span></span>'
           +'</div>'
         +'</div>';
+        // ── Per-leg breakdown (epigraph) ──
+        var gLegsRows=stratGreeks.legs.map(function(l){
+          var sideClr=l.side==='LONG'?'var(--g2)':'var(--r2)';
+          return '<tr>'
+            +'<td style="padding:3px 8px;font-size:10px"><span style="color:'+sideClr+';font-weight:700">'+l.side+'</span> '+l.qty+'x '+l.type+' @'+l.strike+'</td>'
+            +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px;text-align:right;color:#93c5fd">'+(l.delta>=0?'+':'')+l.delta.toFixed(4)+'</td>'
+            +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px;text-align:right;color:#c4b5fd">'+(l.gamma>=0?'+':'')+l.gamma.toFixed(5)+'</td>'
+            +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px;text-align:right;color:#6ee7b7">'+(l.vega>=0?'+':'')+l.vega.toFixed(4)+'</td>'
+            +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px;text-align:right;color:#fdba74">'+(l.theta>=0?'+':'')+l.theta.toFixed(5)+'</td>'
+            +'<td style="padding:3px 8px;font-family:var(--mono);font-size:10px;text-align:right;color:var(--t3)">IV '+l.iv+'%</td>'
+            +'</tr>';
+        }).join('');
+        // Hedge note: what would neutralize each greek
+        var hedgeNotes=[];
+        if(Math.abs(stratGreeks.delta)>0.001) hedgeNotes.push('Para neutralizar Delta ('+( stratGreeks.delta>=0?'+':'')+stratGreeks.delta.toFixed(3)+'): '+(stratGreeks.delta>0?'vender':'comprar')+' aprox. '+(Math.abs(stratGreeks.delta)*100).toFixed(0)+' acciones o delta equivalente');
+        if(Math.abs(stratGreeks.vega)>0.0001)  hedgeNotes.push('Vega '+(stratGreeks.vega>=0?'+':'')+stratGreeks.vega.toFixed(3)+': exposición a cambios de IV — '+(stratGreeks.vega>0?'sube con IV':'baja con IV'));
+        if(Math.abs(stratGreeks.theta)>0.00001) hedgeNotes.push('Theta '+(stratGreeks.theta>=0?'+':'')+stratGreeks.theta.toFixed(4)+'/d — '+(stratGreeks.theta<0?'costo temporal (perdés con el paso del tiempo)':'ganancia temporal (el tiempo juega a favor)'));
+        var gBreakdown='<div style="background:var(--bg2);border-bottom:1px solid var(--bdr);padding:0 14px 10px">'
+          +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:420px">'
+            +'<thead><tr style="border-bottom:1px solid var(--bdr)">'
+              +'<th style="padding:4px 8px;font-size:9px;color:var(--t3);text-align:left;font-family:var(--sans);text-transform:uppercase;letter-spacing:.05em">Pata</th>'
+              +'<th style="padding:4px 8px;font-size:9px;color:#93c5fd;text-align:right;font-family:var(--sans)">&Delta;</th>'
+              +'<th style="padding:4px 8px;font-size:9px;color:#c4b5fd;text-align:right;font-family:var(--sans)">&Gamma;</th>'
+              +'<th style="padding:4px 8px;font-size:9px;color:#6ee7b7;text-align:right;font-family:var(--sans)">&nu;</th>'
+              +'<th style="padding:4px 8px;font-size:9px;color:#fdba74;text-align:right;font-family:var(--sans)">&Theta;</th>'
+              +'<th style="padding:4px 8px;font-size:9px;color:var(--t3);text-align:right;font-family:var(--sans)">IV</th>'
+            +'</tr></thead>'
+            +'<tbody>'+gLegsRows+'</tbody>'
+          +'</table></div>'
+          +(hedgeNotes.length?'<div style="margin-top:8px;padding:6px 8px;background:rgba(255,255,255,.025);border-radius:6px;font-size:10px;color:var(--t3);line-height:1.6">'
+            +'<span style="font-weight:700;color:var(--vl)">Cobertura sugerida &mdash; </span>'
+            +hedgeNotes.join(' &middot; ')
+          +'</div>':'')
+        +'</div>';
+        gHtml=gSummary+gBreakdown;
       } else {
         gHtml='<div style="padding:6px 14px;background:var(--bg2);border-bottom:1px solid var(--bdr);font-size:10px;color:var(--t3)">'
-          +'Griegas no disponibles — cargá el ticker <strong>'+strat.ticker+'</strong> en la cadena y vencimiento para calcularlas.'
+          +'Griegas no disponibles — cargá el ticker <strong>'+strat.ticker+'</strong> en la cadena para calcularlas.'
           +'</div>';
       }
     }
-
-
-    var legsHtml=strat.legs.map(function(leg){
+        var legsHtml=strat.legs.map(function(leg){
       var r=calcLegPnL(leg);
       var cpStr=r.currentPrice!==null?cs+r.currentPrice.toFixed(2):'-';
       var pnlStr=isNaN(r.pnl)?'-'
