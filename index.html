@@ -2492,26 +2492,38 @@ function renderPortfolio(){
     _openPos.forEach(function(pos){
       var cp=NaN;
       if(pos._isStock){
-        // Acciones: last price viene de marketData
-        var _mdPos=marketData[strat.ticker];
-        if(_mdPos&&_mdPos.last>0) cp=_mdPos.last;
-        else {
-          // fallback: spot del rawData
+        // Acciones: usar spot actual (no close de ayer)
+        if(currentData.spot>0&&currentData.ticker===strat.ticker){
+          cp=currentData.spot;
+        } else {
           var _spRow=rawData.find(function(r){return r.ticker===strat.ticker&&parseFloat(r.spot_price)>0;});
           if(_spRow) cp=parseFloat(_spRow.spot_price);
         }
       } else {
-        // Opciones: last de rawData
+        // Opciones: usar last; parseARNum para strikes AR
+        var _sknorm2=parseFloat(pos.strike);
+        // Buscar con ticker+tipo+strike+exp; si no encuentra, intentar sin exp
         var d=rawData.find(function(r){
           return r.ticker===strat.ticker&&r.type===pos.type
-            &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp;
+            &&Math.abs(parseFloat(r.strike)-_sknorm2)<0.05
+            &&r.expiration===pos.exp;
         });
+        if(!d){
+          // Fallback: solo ticker+tipo+strike (toma el primero disponible)
+          d=rawData.find(function(r){
+            return r.ticker===strat.ticker&&r.type===pos.type
+              &&Math.abs(parseFloat(r.strike)-_sknorm2)<0.05;
+          });
+        }
         if(d){
           var _lp=parseFloat(d.lastPrice);
-          var _b=parseFloat(d.bid),_a=parseFloat(d.ask);
-          // prefer mid if available, else last
-          if(!isNaN(_b)&&!isNaN(_a)&&_b>0&&_a>0) cp=(_b+_a)/2;
-          else if(!isNaN(_lp)&&_lp>0) cp=_lp;
+          // Usar last negociado directamente
+          if(!isNaN(_lp)&&_lp>0){
+            cp=_lp;
+          } else {
+            var _b=parseFloat(d.bid),_a=parseFloat(d.ask);
+            if(!isNaN(_b)&&!isNaN(_a)&&_b>0&&_a>0) cp=(_b+_a)/2;
+          }
         }
       }
       if(!isNaN(cp)&&cp>0){
@@ -2704,17 +2716,34 @@ function renderPortfolio(){
       var sideClr=pos.netQty>0?'var(--g2)':'var(--r2)';
       var cp2=null;
       if(pos._isStock){
-        var _mdP=marketData[strat.ticker];
-        if(_mdP&&_mdP.last>0) cp2=_mdP.last;
+        // Para acciones: spot actual, no close de ayer
+        if(currentData.spot>0&&currentData.ticker===strat.ticker){
+          cp2=currentData.spot;
+        } else {
+          var _spRow2=rawData.find(function(r){return r.ticker===strat.ticker&&parseFloat(r.spot_price)>0;});
+          if(_spRow2) cp2=parseFloat(_spRow2.spot_price);
+        }
       } else {
+        var _sk2norm=parseFloat(pos.strike);
         var d2=rawData.find(function(r){
           return r.ticker===strat.ticker&&r.type===pos.type
-            &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp;
+            &&Math.abs(parseFloat(r.strike)-_sk2norm)<0.05
+            &&r.expiration===pos.exp;
         });
+        if(!d2){
+          d2=rawData.find(function(r){
+            return r.ticker===strat.ticker&&r.type===pos.type
+              &&Math.abs(parseFloat(r.strike)-_sk2norm)<0.05;
+          });
+        }
         if(d2){
-          var _b2=parseFloat(d2.bid),_a2=parseFloat(d2.ask),_lp2=parseFloat(d2.lastPrice);
-          if(!isNaN(_b2)&&!isNaN(_a2)&&_b2>0&&_a2>0) cp2=(_b2+_a2)/2;
-          else if(!isNaN(_lp2)&&_lp2>0) cp2=_lp2;
+          var _lp2=parseFloat(d2.lastPrice);
+          if(!isNaN(_lp2)&&_lp2>0){
+            cp2=_lp2;
+          } else {
+            var _b2=parseFloat(d2.bid),_a2=parseFloat(d2.ask);
+            if(!isNaN(_b2)&&!isNaN(_a2)&&_b2>0&&_a2>0) cp2=(_b2+_a2)/2;
+          }
         }
       }
       var unreal2=cp2!==null?(cp2-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot):NaN;
@@ -3459,9 +3488,8 @@ function quickOrderFill(){
   if(type==='stock'){
     // For stocks: price = qoPrima (default: last from marketData or spot)
     var stockLast=0;
-    var _md=marketData[currentData.ticker];
-    if(_md&&_md.last>0) stockLast=_md.last;
-    else if(currentData.spot>0) stockLast=currentData.spot;
+    // Para acciones: precio default = spot actual (no close de ayer)
+    if(currentData.spot>0) stockLast=currentData.spot;
     var primaStock=parseFloat(primaInput);
     if(isNaN(primaStock)||primaStock<=0) primaStock=stockLast;
     if(!primaStock){alert('No se encontr\u00f3 precio. Ingres\u00e1 la prima manualmente.');return;}
