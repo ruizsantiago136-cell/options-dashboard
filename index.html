@@ -1712,10 +1712,19 @@ function renderStrategy(){
       bes.push(rows[i-1].S+(rows[i].S-rows[i-1].S)*(-a/(b-a)));
     }
   }
+  // Max ganancia, max perdida: directamente de la tabla de payoff a vencimiento
   const pnls=rows.map(function(r2){return r2.payExp;});
-  const maxP=Math.max.apply(null,pnls),minP=Math.min.apply(null,pnls);
+  const maxP=Math.max.apply(null,pnls);
+  const minP=Math.min.apply(null,pnls);
 
-  // Table
+  // ── Costo neto: cashflow directo de todas las patas ──
+  const totalNet=legs.reduce(function(s,l){
+    var _lot=l._isStock?1:(l.lot||100);
+    return s+(-l.premium*l.qty*_lot);
+  },0);
+  const cs=currSym();
+
+  // ── Tabla payoff ──
   document.getElementById('payoffBody').innerHTML=rows.map(function(row){
     const cls=row.isCurr?'rcurrent':row.payExp>0.01?'rprofit':row.payExp<-0.01?'rloss':'rbe';
     const s=currSym();
@@ -1733,9 +1742,7 @@ function renderStrategy(){
       +'</tr>';
   }).join('');
 
-  // Chart
-  // Reactive chart: update if exists, create if not
-  // Compute chart data arrays (needed by both update and create paths)
+  // ── Gráfico ──
   const labels=rows.map(function(r2){return currSym()+r2.S.toFixed(0);});
   const expData=rows.map(function(r2){return parseFloat(r2.payExp.toFixed(2));});
   const bsData=rows.map(function(r2){return isNaN(r2.payBS)?null:parseFloat(r2.payBS.toFixed(2));});
@@ -1754,107 +1761,87 @@ function renderStrategy(){
     if(_ch.data.datasets[1]) _ch.data.datasets[1].data=bsData;
     _ch.update('none');
   } else {
-
-  // Build point colors for expiry line based on profit/loss
-  const ptColors=expData.map(function(v){return v>=0?'rgba(52,211,153,.9)':'rgba(248,113,113,.9)';});
-
-  const zeroPlug={id:'z',afterDraw:function(ch){
-    const y=ch.scales&&ch.scales.y;if(!y)return;
-    const y0=y.getPixelForValue(0);
-    ch.ctx.save();ch.ctx.strokeStyle='rgba(255,255,255,.15)';ch.ctx.lineWidth=1;ch.ctx.setLineDash([3,3]);
-    ch.ctx.beginPath();ch.ctx.moveTo(ch.chartArea.left,y0);ch.ctx.lineTo(ch.chartArea.right,y0);ch.ctx.stroke();ch.ctx.restore();
-  }};
-  const spotPlug={id:'sp',afterDraw:function(ch){
-    if(curIdx<0)return;
-    const x=ch.scales&&ch.scales.x;if(!x)return;
-    const xpx=x.getPixelForValue(curIdx);
-    ch.ctx.save();ch.ctx.strokeStyle='rgba(6,182,212,.7)';ch.ctx.lineWidth=2;ch.ctx.setLineDash([5,3]);
-    ch.ctx.beginPath();ch.ctx.moveTo(xpx,ch.chartArea.top);ch.ctx.lineTo(xpx,ch.chartArea.bottom);ch.ctx.stroke();
-    ch.ctx.fillStyle='rgba(6,182,212,.9)';ch.ctx.font='bold 9px IBM Plex Mono';
-    ch.ctx.fillText('SPOT',xpx+4,ch.chartArea.top+14);ch.ctx.restore();
-  }};
-
-  // Gradient fill plugin: green above zero, red below
-  const fillPlug={id:'gf',beforeDatasetsDraw:function(ch){
-    const {ctx,chartArea,scales}=ch;
-    if(!scales.y||!chartArea) return;
-    const y0=scales.y.getPixelForValue(0);
-    const gradG=ctx.createLinearGradient(0,chartArea.top,0,y0);
-    gradG.addColorStop(0,'rgba(52,211,153,.22)');
-    gradG.addColorStop(1,'rgba(52,211,153,.03)');
-    const gradR=ctx.createLinearGradient(0,y0,0,chartArea.bottom);
-    gradR.addColorStop(0,'rgba(248,113,113,.03)');
-    gradR.addColorStop(1,'rgba(248,113,113,.2)');
-    ctx.save();
-    // profit zone
-    ctx.fillStyle=gradG;
-    ctx.fillRect(chartArea.left,chartArea.top,chartArea.width,Math.max(0,y0-chartArea.top));
-    // loss zone
-    ctx.fillStyle=gradR;
-    ctx.fillRect(chartArea.left,y0,chartArea.width,Math.max(0,chartArea.bottom-y0));
-    ctx.restore();
-  }};
-
-  charts['chartPayoff']=new Chart(document.getElementById('chartPayoff').getContext('2d'),{
-    type:'line',
-    data:{labels:labels,datasets:[
-      {label:'Payoff Vencimiento',data:expData,
-       borderWidth:2.5,pointRadius:0,pointHoverRadius:5,tension:0.1,fill:false,
-       segment:{borderColor:function(ctx){
-         // Color each segment based on whether values are positive or negative
-         const v0=expData[ctx.p0DataIndex]||0;
-         const v1=expData[ctx.p1DataIndex]||0;
-         if(v0>=0&&v1>=0) return 'rgba(52,211,153,.95)';
-         if(v0<0&&v1<0)   return 'rgba(248,113,113,.95)';
-         // crossing zero: use midpoint sign
-         return (v0+v1)/2>=0?'rgba(52,211,153,.95)':'rgba(248,113,113,.95)';
-       }},
-       borderColor:'rgba(52,211,153,.95)'},
-      {label:'Teorico BS',data:bsData,
-       borderColor:'rgba(167,139,250,.85)',borderWidth:2,
-       pointRadius:0,pointHoverRadius:4,tension:0.2,borderDash:[5,3],spanGaps:true,fill:false}
-    ]},
-    options:{responsive:true,maintainAspectRatio:false,
-      interaction:{mode:'index',intersect:false},
-      plugins:{
-        legend:{labels:{color:'#a8a8c0',font:{size:10},boxWidth:12,padding:10}},
-        tooltip:{backgroundColor:'rgba(10,10,22,.95)',borderColor:'rgba(124,58,237,.4)',borderWidth:1,
-          padding:9,titleColor:'#c4b5fd',bodyColor:'#a8a8c0',
-          callbacks:{
-            title:function(items){return 'Spot: '+items[0].label;},
-            label:function(item){
-              const v=item.raw||0;
-              return item.dataset.label+': '+(v>=0?'+':'')+currSym()+v.toFixed(2);
+    const ptColors=expData.map(function(v){return v>=0?'rgba(52,211,153,.9)':'rgba(248,113,113,.9)';});
+    const zeroPlug={id:'z',afterDraw:function(ch){
+      const y=ch.scales&&ch.scales.y;if(!y)return;
+      const y0=y.getPixelForValue(0);
+      ch.ctx.save();ch.ctx.strokeStyle='rgba(255,255,255,.15)';ch.ctx.lineWidth=1;ch.ctx.setLineDash([3,3]);
+      ch.ctx.beginPath();ch.ctx.moveTo(ch.chartArea.left,y0);ch.ctx.lineTo(ch.chartArea.right,y0);ch.ctx.stroke();ch.ctx.restore();
+    }};
+    const spotPlug={id:'sp',afterDraw:function(ch){
+      if(curIdx<0)return;
+      const x=ch.scales&&ch.scales.x;if(!x)return;
+      const xpx=x.getPixelForValue(curIdx);
+      ch.ctx.save();ch.ctx.strokeStyle='rgba(6,182,212,.7)';ch.ctx.lineWidth=2;ch.ctx.setLineDash([5,3]);
+      ch.ctx.beginPath();ch.ctx.moveTo(xpx,ch.chartArea.top);ch.ctx.lineTo(xpx,ch.chartArea.bottom);ch.ctx.stroke();
+      ch.ctx.fillStyle='rgba(6,182,212,.9)';ch.ctx.font='bold 9px IBM Plex Mono';
+      ch.ctx.fillText('SPOT',xpx+4,ch.chartArea.top+14);ch.ctx.restore();
+    }};
+    const fillPlug={id:'gf',beforeDatasetsDraw:function(ch){
+      const {ctx,chartArea,scales}=ch;
+      if(!scales.y||!chartArea) return;
+      const y0=scales.y.getPixelForValue(0);
+      const gradG=ctx.createLinearGradient(0,chartArea.top,0,y0);
+      gradG.addColorStop(0,'rgba(52,211,153,.22)');gradG.addColorStop(1,'rgba(52,211,153,.03)');
+      const gradR=ctx.createLinearGradient(0,y0,0,chartArea.bottom);
+      gradR.addColorStop(0,'rgba(248,113,113,.03)');gradR.addColorStop(1,'rgba(248,113,113,.2)');
+      ctx.save();
+      ctx.fillStyle=gradG;ctx.fillRect(chartArea.left,chartArea.top,chartArea.width,Math.max(0,y0-chartArea.top));
+      ctx.fillStyle=gradR;ctx.fillRect(chartArea.left,y0,chartArea.width,Math.max(0,chartArea.bottom-y0));
+      ctx.restore();
+    }};
+    charts['chartPayoff']=new Chart(document.getElementById('chartPayoff').getContext('2d'),{
+      type:'line',
+      data:{labels:labels,datasets:[
+        {label:'Payoff Vencimiento',data:expData,
+         borderWidth:2.5,pointRadius:0,pointHoverRadius:5,tension:0.1,fill:false,
+         segment:{borderColor:function(ctx){
+           const v0=expData[ctx.p0DataIndex]||0,v1=expData[ctx.p1DataIndex]||0;
+           if(v0>=0&&v1>=0) return 'rgba(52,211,153,.95)';
+           if(v0<0&&v1<0) return 'rgba(248,113,113,.95)';
+           return (v0+v1)/2>=0?'rgba(52,211,153,.95)':'rgba(248,113,113,.95)';
+         }},
+         borderColor:'rgba(52,211,153,.95)'},
+        {label:'Teorico BS',data:bsData,
+         borderColor:'rgba(167,139,250,.85)',borderWidth:2,
+         pointRadius:0,pointHoverRadius:4,tension:0.2,borderDash:[5,3],spanGaps:true,fill:false}
+      ]},
+      options:{responsive:true,maintainAspectRatio:false,
+        interaction:{mode:'index',intersect:false},
+        plugins:{
+          legend:{labels:{color:'#a8a8c0',font:{size:10},boxWidth:12,padding:10}},
+          tooltip:{backgroundColor:'rgba(10,10,22,.95)',borderColor:'rgba(124,58,237,.4)',borderWidth:1,
+            padding:9,titleColor:'#c4b5fd',bodyColor:'#a8a8c0',
+            callbacks:{
+              title:function(items){return 'Spot: '+items[0].label;},
+              label:function(item){const v=item.raw||0;return item.dataset.label+': '+(v>=0?'+':'')+currSym()+v.toFixed(2);}
             }
           }
+        },
+        scales:{
+          x:{ticks:{color:'#555570',maxRotation:45,font:{size:8},maxTicksLimit:15},grid:{color:'rgba(124,58,237,.05)'}},
+          y:{ticks:{color:'#555570',font:{size:9},callback:function(v){return(v>=0?'+':'')+v.toFixed(0);}},
+             grid:{color:'rgba(124,58,237,.07)'},
+             title:{display:true,text:'P&L ('+getCurrency()+')',color:'#555570',font:{size:9}}}
         }
       },
-      scales:{
-        x:{ticks:{color:'#555570',maxRotation:45,font:{size:8},maxTicksLimit:15},grid:{color:'rgba(124,58,237,.05)'}},
-        y:{ticks:{color:'#555570',font:{size:9},callback:function(v){return(v>=0?'+':'')+v.toFixed(0);}},
-           grid:{color:'rgba(124,58,237,.07)'},
-           title:{display:true,text:'P&L ('+getCurrency()+')',color:'#555570',font:{size:9}}}
-      }
-    },
-    plugins:[fillPlug,zeroPlug,spotPlug]
-  });
+      plugins:[fillPlug,zeroPlug,spotPlug]
+    });
+  }
 
-  // Metrics
-  const totalNet=legs.reduce(function(s,l){const c=(l.premium||0)*Math.abs(l.qty||0)*(l.lot||100);return s+(l.qty>=0?-c:c);},0);
-  const cs=currSym();
+  // ── Métricas ──
   const mets=[
-    {lbl:'Max Ganancia',val:isFinite(maxP)&&maxP<1e12?'+'+cs+maxP.toFixed(2):'Ilimitada',c:'var(--g2)'},
-    {lbl:'Max Perdida',val:isFinite(minP)&&minP>-1e12?cs+minP.toFixed(2):'Ilimitada',c:'var(--r2)'},
-    {lbl:'Costo Neto',val:(totalNet>=0?'+':'')+cs+totalNet.toFixed(2),c:totalNet>=0?'var(--g2)':'var(--r2)'},
-    {lbl:'Break-Evens',val:bes.length?bes.map(function(b){return cs+b.toFixed(b>1000?0:2);}).join(' / '):'-',c:'var(--gold2)'},
-    {lbl:'IV Calls',val:(ivc*100).toFixed(0)+'%',c:'var(--g2)'},
-    {lbl:'IV Puts',val:(ivp*100).toFixed(0)+'%',c:'var(--r2)'},
+    {lbl:'Max Ganancia',val:maxP>=0?'+'+cs+maxP.toFixed(2):cs+maxP.toFixed(2),c:'var(--g2)'},
+    {lbl:'Max Perdida', val:cs+minP.toFixed(2),c:'var(--r2)'},
+    {lbl:'Costo Neto',  val:(totalNet>=0?'+':'')+cs+totalNet.toFixed(2),c:totalNet>=0?'var(--g2)':'var(--r2)'},
+    {lbl:'Break-Evens', val:bes.length?bes.map(function(b){return cs+b.toFixed(b>1000?0:2);}).join(' / '):'-',c:'var(--gold2)'},
+    {lbl:'IV Calls',    val:(ivc*100).toFixed(0)+'%',c:'var(--g2)'},
+    {lbl:'IV Puts',     val:(ivp*100).toFixed(0)+'%',c:'var(--r2)'},
   ];
   document.getElementById('stratMetrics').innerHTML=mets.map(function(m){
     return '<div class="mc"><div class="mc-lbl">'+m.lbl+'</div><div class="mc-val" style="color:'+m.c+'">'+m.val+'</div></div>';
   }).join('');
 
-  }
   resultsEl.style.display='block';
 }
 
@@ -1986,28 +1973,69 @@ function buildMiniPayoff(strat, cs){
 function reloadStratIntoBuilder(stratId){
   var strat=portfolio.find(function(s){return s.id===stratId;});
   if(!strat) return;
+
+  // ── Set ticker and expiration to match the strategy ──
+  var fT=document.getElementById('fTicker');
+  var fE=document.getElementById('fExp');
+  var chainChanged=false;
+  if(fT&&strat.ticker&&fT.value!==strat.ticker){
+    // Check if ticker is available in the selector
+    var tickerOpts=Array.from(fT.options).map(function(o){return o.value;});
+    if(tickerOpts.includes(strat.ticker)){
+      fT.value=strat.ticker;
+      updateExpSelect();
+      updateRFHint();
+      chainChanged=true;
+    }
+  }
+  // Set expiration: use first leg's exp if strategy has legs
+  var targetExp=strat.expiration||
+    (strat.legs.length?strat.legs.find(function(l){return l.exp;})&&
+      strat.legs.find(function(l){return l.exp;}).exp:'');
+  if(fE&&targetExp){
+    var expOpts=Array.from(fE.options).map(function(o){return o.value;});
+    if(expOpts.includes(targetExp)){
+      fE.value=targetExp;
+      chainChanged=true;
+    }
+  }
+  // Rebuild chain if ticker/exp changed
+  if(chainChanged) rebuildAll();
+
   clearLegs();
   _activeStratId=stratId;
   strat.legs.forEach(function(leg){
     legCnt++;
+    var lot=leg._isStock?1:(leg.lot||100);
     legs.push({
-      id:legCnt,type:leg.type,strike:parseFloat(leg.strike),
-      exp:leg.exp,qty:leg.qty,premium:leg.openPrice,lot:leg.lot||100,
+      id:legCnt,
+      type:leg.type,
+      strike:parseFloat(leg.strike),
+      exp:leg.exp,
+      qty:leg.qty,
+      premium:leg.openPrice||leg.premium||0,
+      _primaRaw:leg._primaRaw||leg.openPrice||leg.premium||0,
+      lot:lot,
       _isStock:leg._isStock||false,
       _closed:leg.status==='closed',
       _closePrima:leg.closePrice||null,
-      _realizedPnl:leg.closePrice?(leg.closePrice-leg.openPrice)*(-leg.qty)*(leg.lot||100):0
+      _realizedPnl:leg.closePrice
+        ?(leg.closePrice-leg.openPrice)*leg.qty*lot
+        :0
     });
   });
+
   switchTab('strategies');
+  syncIVSliders();
+  populateQOExp();
   renderLegsPanel();
-  renderStrategy();
+
   // Toast
   var toast=document.createElement('div');
   toast.style.cssText='position:fixed;bottom:24px;right:24px;z-index:9999;background:rgba(124,58,237,.95);color:#fff;'
     +'font-family:var(--sans);font-size:12px;font-weight:700;padding:10px 18px;border-radius:10px;'
     +'box-shadow:0 4px 20px rgba(0,0,0,.4)';
-  toast.textContent='"'+strat.name+'" cargada en el simulador con '+strat.legs.length+' pata(s)';
+  toast.textContent='"'+strat.name+'" → '+strat.ticker+(targetExp?' vcto: '+targetExp:'');
   document.body.appendChild(toast);
   setTimeout(function(){toast.style.opacity='0';toast.style.transition='opacity .4s';
     setTimeout(function(){toast.remove();},400);},2500);
@@ -2169,23 +2197,34 @@ function confirmSaveStrat(){
       premium:l.premium,lot:l.lot,ticker:currentData.ticker||l._ticker||'',
       currency:currentData.currency||'USD',
       openPrice:l.premium,
+      _primaRaw:l._primaRaw!==undefined?l._primaRaw:l.premium,
       status:l._closed?'closed':'open',
       closePrice:l._closePrima||null,
       closedAt:l._closed?(l.closedAt||new Date().toLocaleString('es-AR')):null,
       _isStock:l._isStock||false};
   });
-  // If a strategy is currently loaded, overwrite it
+  // Overwrite if: same _activeStratId AND same name (user kept the name)
   if(_activeStratId){
     var existing=portfolio.find(function(s){return s.id===_activeStratId;});
-    if(existing){
-      existing.name=name;existing.notes=notes;
+    if(existing&&existing.name===name){
+      existing.notes=notes;
       existing.legs=stratLegs;
       existing.status=stratLegs.every(function(l){return l.status==='closed';})?'closed':'open';
       existing.updatedAt=new Date().toLocaleString('es-AR');
       savePortfolioToStorage();closeSaveModal();switchTab('portfolio');return;
     }
   }
-  // New strategy
+  // Also overwrite if another strategy with the same name already exists
+  var sameName=portfolio.find(function(s){return s.name===name;});
+  if(sameName){
+    sameName.notes=notes;
+    sameName.legs=stratLegs;
+    sameName.status=stratLegs.every(function(l){return l.status==='closed';})?'closed':'open';
+    sameName.updatedAt=new Date().toLocaleString('es-AR');
+    _activeStratId=sameName.id;
+    savePortfolioToStorage();closeSaveModal();switchTab('portfolio');return;
+  }
+  // New strategy (different name = always new)
   portfolio.push({
     id:Date.now(),name:name,notes:notes,
     ticker:currentData.ticker||'',expiration:currentData.exp||'',
@@ -2323,11 +2362,88 @@ function renderPortfolio(){
   });
   renderPortGreeks();
   cards.innerHTML=portfolio.map(function(strat){
-    var sPnL=0,sPnLValid=true;
-    strat.legs.forEach(function(leg){var r=calcLegPnL(leg);if(isNaN(r.pnl))sPnLValid=false;else sPnL+=r.pnl;});
+    // ── Net positions for this strategy (same logic as simulator) ──
+    var _sLegs=strat.legs;
+    var _groups={};
+    _sLegs.forEach(function(l){
+      var _sk=parseFloat(l.strike);
+      var _skStr=(_sk%1===0)?_sk.toFixed(0):_sk.toFixed(2);
+      var k=(l._isStock?'stock':l.type)+':'+_skStr+':'+l.exp;
+      if(!_groups[k]) _groups[k]={type:l._isStock?'stock':l.type,strike:_sk,exp:l.exp,
+        _isStock:l._isStock||false,lot:l.lot||(l._isStock?1:100),legs:[]};
+      _groups[k].legs.push(l);
+    });
+    var _openPos=[],_closedPnl=0,_closedPnlValid=true;
+    Object.keys(_groups).forEach(function(k){
+      var g=_groups[k];
+      var lot=g.lot;
+      var netQty=Math.round(g.legs.reduce(function(s,l){return s+(l.qty||0);},0)*1e6)/1e6;
+      var cf=g.legs.reduce(function(s,l){return s+(-l.openPrice*l.qty*(g._isStock?1:lot));},0);
+      if(Math.abs(netQty)<1e-4){
+        _closedPnl+=cf;
+      } else {
+        var buyLegs=g.legs.filter(function(l){return l.qty>0;});
+        var sellLegs=g.legs.filter(function(l){return l.qty<0;});
+        var tBQ=buyLegs.reduce(function(s,l){return s+l.qty;},0);
+        var tSQ=sellLegs.reduce(function(s,l){return s+Math.abs(l.qty);},0);
+        var ppcNeto=netQty>0
+          ?(tBQ>0?buyLegs.reduce(function(s,l){return s+l.openPrice*l.qty;},0)/tBQ:0)
+          :(tSQ>0?sellLegs.reduce(function(s,l){return s+l.openPrice*Math.abs(l.qty);},0)/tSQ:0);
+        var ppcBruto=netQty>0
+          ?(tBQ>0?buyLegs.reduce(function(s,l){return s+(l._primaRaw||l.openPrice)*l.qty;},0)/tBQ:0)
+          :(tSQ>0?sellLegs.reduce(function(s,l){return s+(l._primaRaw||l.openPrice)*Math.abs(l.qty);},0)/tSQ:0);
+        _openPos.push({key:k,type:g.type,strike:g.strike,exp:g.exp,
+          _isStock:g._isStock,lot:lot,netQty:netQty,
+          ppcNeto:ppcNeto,ppcBruto:ppcBruto,ppcLabel:netQty>0?'PPC':'PPV'});
+      }
+    });
+    // P&L no realizado de posiciones abiertas
+    var _unrealPnl=0,_unrealValid=true;
+    _openPos.forEach(function(pos){
+      var cp=NaN;
+      if(pos._isStock){
+        // Acciones: last price viene de marketData
+        var _mdPos=marketData[strat.ticker];
+        if(_mdPos&&_mdPos.last>0) cp=_mdPos.last;
+        else {
+          // fallback: spot del rawData
+          var _spRow=rawData.find(function(r){return r.ticker===strat.ticker&&parseFloat(r.spot_price)>0;});
+          if(_spRow) cp=parseFloat(_spRow.spot_price);
+        }
+      } else {
+        // Opciones: last de rawData
+        var d=rawData.find(function(r){
+          return r.ticker===strat.ticker&&r.type===pos.type
+            &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp;
+        });
+        if(d){
+          var _lp=parseFloat(d.lastPrice);
+          var _b=parseFloat(d.bid),_a=parseFloat(d.ask);
+          // prefer mid if available, else last
+          if(!isNaN(_b)&&!isNaN(_a)&&_b>0&&_a>0) cp=(_b+_a)/2;
+          else if(!isNaN(_lp)&&_lp>0) cp=_lp;
+        }
+      }
+      if(!isNaN(cp)&&cp>0){
+        // P&L abierto = (last - PPC_neto) x qty_neta x lot
+        _unrealPnl+=(cp-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot);
+      } else {
+        _unrealValid=false;
+      }
+    });
+    // P&L total = cerradas (flujo neto) + abiertas (last vs PPC)
+    var sPnL=_closedPnl+_unrealPnl;
+    var sPnLValid=_openPos.every(function(pos){
+      if(pos._isStock){var _m=marketData[strat.ticker];return _m&&_m.last>0;}
+      return rawData.some(function(r){
+        return r.ticker===strat.ticker&&r.type===pos.type
+          &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp
+          &&parseFloat(r.lastPrice)>0;
+      });
+    });
     var pnlClr=sPnL>=0?'var(--g2)':'var(--r2)';
     var cs=strat.currency==='ARS'?'$AR ':'$';
-    var openCount=strat.legs.filter(function(l){return l.status==='open';}).length;
+    var openCount=_openPos.length; // net open positions
     // Spot from this strategy's own ticker in rawData
     var stratSpot=0;
     if(strat.ticker&&rawData.length){
@@ -2492,28 +2608,55 @@ function renderPortfolio(){
           +'</div>';
       }
     }
-        var legsHtml=strat.legs.map(function(leg){
-      var r=calcLegPnL(leg);
-      var cpStr=r.currentPrice!==null?cs+r.currentPrice.toFixed(2):'-';
-      var pnlStr=isNaN(r.pnl)?'-'
-        :'<span style="color:'+(r.pnl>=0?'var(--g2)':'var(--r2)')+'">'+(r.pnl>=0?'+':'')+cs+r.pnl.toFixed(2)+'</span>';
-      var rowCls=leg.status==='closed'?'closed-leg':'';
-      var actionBtn=leg.status==='open'
-        ?'<button class="close-leg-btn" onclick="closeLeg('+strat.id+','+leg.id+')">Cerrar</button>'
-        :'<button class="reopen-btn" onclick="reopenLeg('+strat.id+','+leg.id+')">Reabrir</button>';
-      return '<tr class="'+rowCls+'">'
-        +'<td>'+(leg.qty>0?'<span style="color:var(--g2)">LONG</span>':'<span style="color:var(--r2)">SHORT</span>')+'</td>'
-        +'<td style="text-transform:uppercase">'+leg.type+'</td>'
-        +'<td>'+cs+leg.strike+'</td>'
-        +'<td>'+leg.exp+'</td>'
-        +'<td>'+Math.abs(leg.qty)+'x'+leg.lot+'</td>'
-        +'<td>'+cs+leg.openPrice+'</td>'
-        +'<td>'+cpStr+'</td>'
-        +'<td>'+pnlStr+'</td>'
-        +'<td>'+(leg.status==='open'?'<span class="status-open">ABIERTA</span>':'<span class="status-closed">CERRADA</span>')+'</td>'
-        +'<td>'+actionBtn+'</td>'
+        // ── Open positions (net) ──
+    var legsHtml='';
+    _openPos.forEach(function(pos){
+      var sideClr=pos.netQty>0?'var(--g2)':'var(--r2)';
+      var cp2=null;
+      if(pos._isStock){
+        var _mdP=marketData[strat.ticker];
+        if(_mdP&&_mdP.last>0) cp2=_mdP.last;
+      } else {
+        var d2=rawData.find(function(r){
+          return r.ticker===strat.ticker&&r.type===pos.type
+            &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp;
+        });
+        if(d2){
+          var _b2=parseFloat(d2.bid),_a2=parseFloat(d2.ask),_lp2=parseFloat(d2.lastPrice);
+          if(!isNaN(_b2)&&!isNaN(_a2)&&_b2>0&&_a2>0) cp2=(_b2+_a2)/2;
+          else if(!isNaN(_lp2)&&_lp2>0) cp2=_lp2;
+        }
+      }
+      var unreal2=cp2!==null?(cp2-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot):NaN;
+      var pnlStr2=isNaN(unreal2)?'-'
+        :'<span style="color:'+(unreal2>=0?'var(--g2)':'var(--r2)')+'">'+( unreal2>=0?'+':'')+cs+unreal2.toFixed(2)+'</span>';
+      legsHtml+='<tr>'
+        +'<td><span style="color:'+sideClr+';font-weight:700">'+(pos.netQty>0?'LONG':'SHORT')+'</span></td>'
+        +'<td style="text-transform:uppercase">'+pos.type+'</td>'
+        +'<td>'+cs+pos.strike+'</td>'
+        +'<td>'+pos.exp+'</td>'
+        +'<td>'+Math.abs(pos.netQty)+'</td>'
+        +'<td><span style="color:var(--vb)">'+(pos.ppcLabel)+' neto: '+cs+pos.ppcNeto.toFixed(2)+'</span>'
+          +(Math.abs((pos.ppcBruto||0)-pos.ppcNeto)>0.001
+            ?'<br><span style="opacity:.5;font-size:9px">bruto: '+cs+(pos.ppcBruto||0).toFixed(2)+'</span>'
+            :'')
+        +'</td>'
+        +'<td>'+(cp2!==null?cs+cp2.toFixed(2):'-')+'</td>'
+        +'<td>'+pnlStr2+'</td>'
+        +'<td><span class="status-open">ABIERTA</span></td>'
+        +'<td></td>'
         +'</tr>';
-    }).join('');
+    });
+    // ── Closed PnL row ──
+    if(_closedPnl!==0||_openPos.length===0){
+      var cClr=_closedPnl>=0?'var(--g2)':'var(--r2)';
+      legsHtml+='<tr style="background:rgba(255,255,255,.025)">'
+        +'<td colspan="7" style="color:var(--t3);font-size:10px">PnL realizado (posiciones cerradas)</td>'
+        +'<td><span style="color:'+cClr+';font-weight:700">'+(_closedPnl>=0?'+':'')+cs+_closedPnl.toFixed(2)+'</span></td>'
+        +'<td><span class="status-closed">CERRADA</span></td>'
+        +'<td></td>'
+        +'</tr>';
+    }
 
     return '<div class="strat-card">'
       +'<div class="strat-card-header">'
@@ -2549,8 +2692,8 @@ function renderPortfolio(){
           +'<table class="sc-legs-tbl">'
             +'<thead><tr>'
               +'<th>Lado</th><th>Tipo</th><th>Strike</th><th>Vto</th>'
-              +'<th>Qty</th><th>Entrada</th><th>Precio act.</th>'
-              +'<th>P&L</th><th>Estado</th><th>Accion</th>'
+              +'<th>Qty neta</th><th>PPC / PPV</th><th>Precio act.</th>'
+              +'<th>P&L</th><th>Estado</th><th></th>'
             +'</tr></thead>'
             +'<tbody>'+legsHtml+'</tbody>'
           +'</table>'
@@ -3149,7 +3292,14 @@ function populateQOStrikes(){
   var type=typeSel?typeSel.value:'call';
   // If type is stock, just show the spot price
   if(type==='stock'){
-    sel.innerHTML='<option value="'+(currentData.spot||0)+'">'+(currentData.spot||0)+' (spot)</option>';
+    // For stocks, populate prima with last market price
+    var _mdS=marketData[ticker];
+    var _lastS=_mdS&&_mdS.last>0?_mdS.last:(currentData.spot||0);
+    sel.innerHTML='<option value="'+_lastS+'">'+(currentData.ticker||'')
+      +' — Last: '+(_lastS>0?_lastS.toLocaleString('es-AR',{maximumFractionDigits:2}):'?')+'</option>';
+    // Auto-fill prima
+    var primaEl=document.getElementById('qoPrima');
+    if(primaEl&&_lastS>0) primaEl.value=_lastS.toFixed(2);
     return;
   }
   var strikesSet=new Set();
@@ -3199,17 +3349,25 @@ function quickOrderFill(){
   var _strikeRaw=document.getElementById('qoStrike').value;
   if(type!=='stock') strike=parseFloat(_strikeRaw)||0;
   if(type==='stock'){
-    strike=parseFloat(document.getElementById('qoStrike').value)||currentData.spot||0;
-    if(!strike){alert('Ingres\u00e1 precio de entrada.');return;}
-    var prima=parseFloat(primaInput)||strike;
-    legCnt++;
+    // For stocks: price = qoPrima (default: last from marketData or spot)
+    var stockLast=0;
+    var _md=marketData[currentData.ticker];
+    if(_md&&_md.last>0) stockLast=_md.last;
+    else if(currentData.spot>0) stockLast=currentData.spot;
+    var primaStock=parseFloat(primaInput);
+    if(isNaN(primaStock)||primaStock<=0) primaStock=stockLast;
+    if(!primaStock){alert('No se encontr\u00f3 precio. Ingres\u00e1 la prima manualmente.');return;}
     var _isARS2=currentData.currency==='ARS';
-  var _comPct2=parseFloat(document.getElementById(_isARS2?'qoComAR':'qoComUS').value)||0;
-  var _impPct2=parseFloat(document.getElementById(_isARS2?'qoImpAR':'qoImpUS').value)||0;
-  var _comTotal2=_comPct2/100*(1+_impPct2/100);
-  var _primaNet2=qty>0?prima*(1+_comTotal2):prima*(1-_comTotal2);
-  legs.push({id:legCnt,type:'stock',strike:strike,exp:exp,qty:qty,premium:parseFloat(_primaNet2.toFixed(2)),lot:1,_isStock:true,_primaRaw:prima,_comTotal:_comTotal2});
-    document.getElementById('qoStrike').value='';
+    var _comPct2=parseFloat((document.getElementById(_isARS2?'qoComAR':'qoComUS')||{}).value)||0;
+    var _impPct2=parseFloat((document.getElementById(_isARS2?'qoImpAR':'qoImpUS')||{}).value)||0;
+    var _comTotal2=_comPct2/100*(1+_impPct2/100);
+    // Buy: pay more; Sell: receive less
+    var _primaNet2=qty>0?primaStock*(1+_comTotal2):primaStock*(1-_comTotal2);
+    legCnt++;
+    // strike = entry price for payoff calculation; lot = 1 (each share is 1 share)
+    legs.push({id:legCnt,type:'stock',strike:primaStock,exp:exp,qty:qty,
+      premium:_primaNet2,lot:1,_isStock:true,
+      _primaRaw:primaStock,_comTotal:_comTotal2});
     document.getElementById('qoPrima').value='';
     renderLegsPanel(); renderStrategy(); return;
   }
