@@ -173,6 +173,8 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
 .ph-li{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--t2)}
 .ph-dot{width:8px;height:8px;border-radius:50%}
 .po-scroll{overflow-y:visible;max-height:none}
+.po-compact td,.po-compact th{padding:3px 8px!important;font-size:10px!important}
+.po-compact td:first-child{font-size:10px!important}
 .po-tbl{width:100%;border-collapse:collapse}
 .po-tbl thead th{padding:6px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--t3);background:var(--bg3);position:sticky;top:0;z-index:2;text-align:right;font-family:var(--sans);line-height:1.4;border-bottom:1px solid var(--bdr2)}
 .po-tbl thead th:first-child,.po-tbl thead th:nth-child(2){text-align:left}
@@ -512,8 +514,8 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
       <!-- IV sliders -->
       <div class="sc-controls" style="border-bottom:1px solid var(--bdr)">
         <div class="sc-row">
-          <div class="cg2"><label>Rango (%)</label>
-            <div class="rf-row"><input type="number" id="scRange" value="20" min="5" max="60" step="1" style="width:70px" oninput="renderStrategy()"><span>&#xB1;</span></div>
+          <div class="cg2"><label>Rango: <span id="scRangeLbl2" style="color:var(--vb);font-weight:700">20%</span></label>
+            <div class="rf-row" style="font-size:10px;color:var(--t3)">ajustar con slider lateral</div>
           </div>
           <div class="cg2"><label>Filas</label>
             <div class="rf-row"><input type="number" id="scSteps" value="25" min="5" max="51" step="2" style="width:70px" oninput="renderStrategy()"></div>
@@ -547,7 +549,7 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
 
       <!-- Payoff table (tall) -->
       <div class="strat-r      <div class="strat-results" id="stratResults" style="display:block;padding:12px">
-        <!-- Chart FIRST -->
+        <!-- Chart -->
         <div class="chart-outer" style="margin-bottom:10px">
           <div class="ph">
             <span class="ph-title">Perfil P&amp;L</span>
@@ -556,26 +558,42 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
               <span style="color:var(--vb)"><span style="width:14px;height:2px;background:var(--vb);display:inline-block;vertical-align:middle;margin-right:3px;opacity:.7"></span>BS</span>
             </div>
           </div>
-          <div style="padding:14px;height:300px;position:relative"><canvas id="chartPayoff"></canvas></div>
+          <div style="padding:14px;height:280px;position:relative"><canvas id="chartPayoff"></canvas></div>
         </div>
         <div class="metrics-grid" id="stratMetrics" style="margin-bottom:8px"></div>
         <div id="stratGarantias" style="display:none;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:7px 14px;margin-bottom:8px;font-size:11px;font-family:var(--mono)"><span style="color:var(--gold2);font-weight:700">Garantias requeridas: </span><span class="g-val" style="font-weight:800;color:var(--t)"></span><span style="color:var(--t3);font-size:9px;margin-left:8px">last x lotes x 100 x 1,45</span></div>
-        <!-- Table below -->
-        <div style="font-size:9px;font-weight:700;color:var(--vl);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;align-items:center;gap:12px">
-          <span>Tabla de Payoff</span>
-          <span style="font-weight:400;color:var(--t3)">
-            <span style="color:var(--g2)">ganancia</span> &nbsp;
-            <span style="color:var(--r2)">perdida</span> &nbsp;
-            <span style="color:var(--accent)">spot actual</span>
-          </span>
-        </div>
-        <div class="po-scroll" style="max-height:340px">
-          <table class="po-tbl">
-            <thead>
-              <tr><th>Precio</th><th>Var%</th><th>Payoff Vcto</th><th>P&amp;L BS</th><th>Delta</th></tr>
-            </thead>
-            <tbody id="payoffBody"></tbody>
-          </table>
+        <!-- Tabla + slider de rango en columnas -->
+        <div style="display:flex;gap:8px;align-items:flex-start">
+          <!-- Slider vertical de rango -->
+          <div style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:4px 0;min-width:36px">
+            <span style="font-size:9px;color:var(--t3);font-family:var(--mono)">60%</span>
+            <input type="range" id="scRange" min="5" max="60" step="1" value="20"
+              orient="vertical"
+              style="writing-mode:vertical-lr;direction:rtl;width:20px;height:220px;cursor:pointer;accent-color:var(--v)"
+              oninput="document.getElementById('scRangeLbl').textContent=this.value+'%';renderStrategy()">
+            <span style="font-size:9px;color:var(--t3);font-family:var(--mono)">5%</span>
+            <span id="scRangeLbl" style="font-size:10px;font-weight:700;color:var(--vb);font-family:var(--mono)">20%</span>
+            <span style="font-size:8px;color:var(--t3)">rango</span>
+          </div>
+          <!-- Tabla compacta, completa sin scroll -->
+          <div style="flex:1;overflow-x:auto">
+            <div style="font-size:9px;font-weight:700;color:var(--vl);text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px;display:flex;gap:10px">
+              <span>Payoff a vencimiento</span>
+              <span style="font-weight:400;color:var(--t3)">
+                <span style="color:var(--g2)">ganancia</span>
+                <span style="color:var(--r2);margin-left:6px">perdida</span>
+                <span style="color:var(--accent);margin-left:6px">spot</span>
+              </span>
+            </div>
+            <div class="po-scroll">
+              <table class="po-tbl po-compact">
+                <thead>
+                  <tr><th>Precio</th><th>Var%</th><th>Payoff Vcto</th><th>P&amp;L BS</th><th>Delta</th></tr>
+                </thead>
+                <tbody id="payoffBody"></tbody>
+              </table>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -1255,13 +1273,8 @@ function updateStats(){
   var _spotNow=currentData.spot||0;
   var _vp=0;
   if(_md&&_md.rows&&_md.rows.length>=1&&_spotNow>0){
-    var _rows=_md.rows;
-    var _lastClose=_rows[_rows.length-1].close;
-    var _refClose=_lastClose;
-    // Si el spot es muy cercano al ultimo close (misma sesion), usar anteultimo
-    if(_rows.length>=2&&Math.abs(_spotNow-_lastClose)/_lastClose<0.001){
-      _refClose=_rows[_rows.length-2].close;
-    }
+    // Siempre comparar spot (sesion actual) vs ultimo close de market_data (sesion anterior)
+    var _refClose=_md.rows[_md.rows.length-1].close;
     if(_refClose>0) _vp=(_spotNow-_refClose)/_refClose;
   }
   if(_varEl){
@@ -1319,15 +1332,18 @@ function fLastFull(d){
 }
 
 // Click on any row in the chain → load into strategy builder
-function loadLegFromChain(type,strike,exp,last){
+function loadLegFromChain(type,strike,exp,last,forcedPrice){
   // Fill the global order bar with this option's data (user can edit before confirming)
+  // forcedPrice: when clicking bid or ask, use that price directly
   var d=rawData.find(function(r){
     return r.ticker===currentData.ticker&&r.type===type
       &&Math.abs(parseFloat(r.strike)-strike)<0.01&&r.expiration===exp;
   });
-  // Get last traded as default premium (no mid — user sees exactly what traded)
   var lastPx=null;
-  if(d){
+  if(forcedPrice&&forcedPrice>0){
+    // Bid or Ask clicked — use that price directly
+    lastPx=forcedPrice;
+  } else if(d){
     var lp=parseFloat(d.lastPrice);
     if(!isNaN(lp)&&lp>0) lastPx=lp;
   }
@@ -1395,8 +1411,8 @@ function renderChain(){
     const cClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.lastPrice||0)+')" title="Click: cargar en estrategia" style="cursor:pointer"':'';
     const pClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.lastPrice||0)+')" title="Click: cargar en estrategia" style="cursor:pointer"':'';
     // Click handlers for bid and ask
-    const cBidClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.bid||0)+')" title="Cargar bid" style="cursor:pointer;color:var(--r2)"':'';
-    const cAskClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.ask||0)+')" title="Cargar ask" style="cursor:pointer;color:var(--g2)"':'';
+    const cBidClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.bid||0)+','+(c.bid||0)+')" title="Cargar bid" style="cursor:pointer;color:var(--r2)"':'';
+    const cAskClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.ask||0)+','+(c.ask||0)+')" title="Cargar ask" style="cursor:pointer;color:var(--g2)"':'';
     const cCols=c
       ?'<td class="tdc">'+fTheo(bC.price)+'</td>'
        +'<td class="tdc sl">'+fDelta(bC.delta)+'</td><td class="tdc">'+fGamma(bC.gamma)+'</td>'
@@ -1408,8 +1424,8 @@ function renderChain(){
        +'<td class="tdc">'+fPct(c.percentChange)+'</td>'
        +'<td class="tdc">'+ivChip(c._iv)+'</td>'
       :'<td class="tdc sl na">-</td>'+eC+eC+eC+eC+eC+eC+eC+eC+eC+eC+eC;
-    const pBidClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.bid||0)+')" title="Cargar bid" style="cursor:pointer;color:var(--r2)"':'';
-    const pAskClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.ask||0)+')" title="Cargar ask" style="cursor:pointer;color:var(--g2)"':'';
+    const pBidClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.bid||0)+','+(p.bid||0)+')" title="Cargar bid" style="cursor:pointer;color:var(--r2)"':'';
+    const pAskClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.ask||0)+','+(p.ask||0)+')" title="Cargar ask" style="cursor:pointer;color:var(--g2)"':'';
     const pCols=p
       ?'<td class="tdp">'+ivChip(p._iv)+'</td>'
        +'<td class="tdp">'+fPct(p.percentChange)+'</td>'
@@ -1914,11 +1930,11 @@ function renderStrategy(){
     var _lastG=0;
     if(_dg){
       var _lpg=parseFloat(_dg.lastPrice);
-      var _bg=parseFloat(_dg.bid),_ag=parseFloat(_dg.ask);
-      if(!isNaN(_bg)&&!isNaN(_ag)&&_bg>0&&_ag>0) _lastG=(_bg+_ag)/2;
-      else if(!isNaN(_lpg)&&_lpg>0) _lastG=_lpg;
+      // Garantías siempre sobre el last negociado
+      if(!isNaN(_lpg)&&_lpg>0) _lastG=_lpg;
     }
     if(_lastG>0){
+      // Garantía = last * cantidad * 100 * 1.45
       _garantias+=_lastG*Math.abs(pos.netQty)*(pos.lot||100)*1.45;
     }
   });
@@ -2798,9 +2814,9 @@ function renderPortfolio(){
                   &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp;
               });
               var _lPort=0;
-              if(_dPort){var _lpPort=parseFloat(_dPort.lastPrice),_bPort=parseFloat(_dPort.bid),_aPort=parseFloat(_dPort.ask);
-                if(!isNaN(_bPort)&&!isNaN(_aPort)&&_bPort>0&&_aPort>0) _lPort=(_bPort+_aPort)/2;
-                else if(!isNaN(_lpPort)&&_lpPort>0) _lPort=_lpPort;}
+              if(_dPort){var _lpPort=parseFloat(_dPort.lastPrice);
+                // Garantías siempre sobre el last negociado
+                if(!isNaN(_lpPort)&&_lpPort>0) _lPort=_lpPort;}
               if(_lPort>0) _gPort+=_lPort*Math.abs(pos.netQty)*(pos.lot||100)*1.45;
             });
             return _gPort>0
@@ -3470,7 +3486,7 @@ function qoAutoFillPrima(){
     var lp=parseFloat(d.lastPrice);
     var b=parseFloat(d.bid),a=parseFloat(d.ask);
     var px=(!isNaN(b)&&!isNaN(a)&&b>0&&a>0)?(b+a)/2:((!isNaN(lp)&&lp>0)?lp:0);
-    if(px>0) primaEl.value=px.toFixed(2);
+    if(px>0){primaEl.value=px.toFixed(2);updateQOMonto();}
   }
 }
 
@@ -3824,15 +3840,28 @@ function syncIVSliders(){
 // CSV export/import
 function exportLegsCSV(){
   if(!legs.length){alert('No hay patas cargadas.');return;}
-  var rows=['underlying;tipo;cantidad;strike;prima_bruta;prima_neta;vencimiento'];
+  // Formato simple: underlying;tipo;cantidad;strike;prima;vencimiento
+  var rows=['underlying;tipo;cantidad;strike;prima;vencimiento'];
   legs.forEach(function(l){
-    var pb=l._primaRaw!==undefined?l._primaRaw:l.premium;
-    rows.push((currentData.ticker||'')+';'+(l._isStock?'stock':l.type)+';'+l.qty+';'+l.strike+';'+pb+';'+l.premium+';'+l.exp);
+    var prima=l._primaRaw!==undefined?l._primaRaw:l.premium;
+    var strikeStr=String(l.strike).replace('.',',');
+    var primaStr=String(prima).replace('.',',');
+    rows.push([
+      currentData.ticker||'',
+      l._isStock?'stock':l.type,
+      l.qty,
+      strikeStr,
+      primaStr,
+      l.exp||''
+    ].join(';'));
   });
-  var blob=new Blob([rows.join('\n')],{type:'text/csv'});
+  var blob=new Blob([rows.join('\r\n')],{type:'text/csv;charset=utf-8;'});
   var a=document.createElement('a');
-  a.href=URL.createObjectURL(blob);a.download='estrategia.csv';a.click();
+  a.href=URL.createObjectURL(blob);
+  a.download='estrategia.csv';
+  a.click();
 }
+
 function importLegsCSV(){
   var inp=document.createElement('input');inp.type='file';inp.accept='.csv,.txt';
   inp.onchange=function(){
@@ -3840,135 +3869,124 @@ function importLegsCSV(){
     var reader=new FileReader();
     reader.onload=function(e){
       var raw=e.target.result.trim();
-
-      // ── Detect separator (handle spaces around ;)
+      // Detectar separador: si hay punto y coma, siempre usar ;
+      // (evita partir números con coma decimal como "78,00" cuando sep=,)
       var firstLine=raw.split('\n')[0];
-      var cntSemi=firstLine.split(';').length-1;
-      var cntComma=firstLine.split(',').length-1;
-      var sep=cntSemi>0?';':',';
-
-      // ── Parse rows: split by sep, trim each cell, remove quotes
-      var rows=raw.split('\n').map(function(l){
+      var sep=firstLine.includes(';')?';':',';
+      var allRows=raw.split('\n').map(function(l){
+        // Si sep=,: manejar campos quoted que contienen comas (ej: "7.320,50")
+        if(sep===','){
+          var cells=[],cur='',inq=false;
+          for(var _ci=0;_ci<l.length;_ci++){
+            var _ch=l[_ci];
+            if(_ch==='"'){inq=!inq;}
+            else if(_ch===','&&!inq){cells.push(cur.trim());cur='';}
+            else{cur+=_ch;}
+          }
+          cells.push(cur.trim());
+          return cells.map(function(c){return c.replace(/^"|"$/g,'');});
+        }
         return l.split(sep).map(function(c){return c.trim().replace(/^"|"$/g,'');});
       }).filter(function(r){return r.some(function(c){return c!=='';});});
-
-      if(!rows.length){alert('Archivo vac\u00edo.');return;}
-
-      // ── Detect header: first row has non-numeric values
-      var hdr=rows[0].map(function(h){return h.toLowerCase().trim();});
+      if(!allRows.length){alert('Archivo vacío.');return;}
+      // Detectar header
+      var hdr=allRows[0].map(function(h){return h.toLowerCase().trim();});
       var hasHeader=hdr.some(function(h){
         return h.length>0&&isNaN(parseARNum(h))&&!['call','put','c','p','stock'].includes(h);
       });
-      var start=hasHeader?1:0;
-
-      // ── Map column indices from header
-      // Special case: prefer 'prima_bruta' over 'prima_neta'
-      var idxUnderlying=-1,idxType=-1,idxQty=-1,idxStrike=-1;
-      var idxPrimaBruta=-1,idxPrimaNeta=-1,idxExp=-1;
-
+      var dataRows=allRows.slice(hasHeader?1:0);
+      // Mapear columnas desde header o por posicion
+      // Formato: underlying;tipo;cantidad;strike;prima;vencimiento
+      var iUnd=-1,iType=-1,iQty=-1,iStrike=-1,iPrima=-1,iExp=-1;
       if(hasHeader){
         hdr.forEach(function(h,i){
-          if(h.includes('ticker')||h.includes('under')||h.includes('activo')) idxUnderlying=i;
-          else if(h.includes('tipo')||h==='type') idxType=i;
-          else if(h==='qty'||h.includes('cantidad')||h.includes('lote')) idxQty=i;
-          else if(h.includes('strike')||h.includes('ejercicio')) idxStrike=i;
-          else if(h.includes('prima_bruta')||h.includes('bruta')) idxPrimaBruta=i;
-          else if(h.includes('prima_neta')||h.includes('neta')) idxPrimaNeta=i;
-          else if(h.includes('prima')||h.includes('precio')||h.includes('prem')) {
-            if(idxPrimaBruta<0) idxPrimaBruta=i; // first 'prima' = bruta
-          }
-          else if(h.includes('vto')||h.includes('exp')||h.includes('venc')) idxExp=i;
+          if(h.includes('under')||h.includes('ticker')||h.includes('activo')) iUnd=i;
+          else if(h.includes('tipo')||h==='type') iType=i;
+          else if(h.includes('cantidad')||h==='qty'||h.includes('lote')) iQty=i;
+          else if(h.includes('strike')||h.includes('ejercicio')) iStrike=i;
+          else if(h.includes('prima')||h.includes('precio')||h.includes('prem')) iPrima=i;
+          else if(h.includes('vto')||h.includes('exp')||h.includes('venc')) iExp=i;
         });
       }
-
-      // ── Fallback positions for your format: underlying;tipo;cantidad;strike;prima_bruta;prima_neta;vencimiento
-      var hasUnderlying=idxUnderlying>=0||( hasHeader&&hdr[0].includes('under'));
-      if(!hasUnderlying&&idxUnderlying<0){
-        // Try to detect: if first col looks like a ticker (letters)
-        var firstDataRow=rows[start]||[];
-        if(firstDataRow[0]&&isNaN(parseARNum(firstDataRow[0]))&&
-           !['call','put','c','p','stock'].includes(firstDataRow[0].toLowerCase())){
-          hasUnderlying=true;idxUnderlying=0;
-        }
-      }
-      var base=hasUnderlying?1:0;
-      if(idxType<0)       idxType=base+0;
-      if(idxQty<0)        idxQty=base+1;
-      if(idxStrike<0)     idxStrike=base+2;
-      if(idxPrimaBruta<0) idxPrimaBruta=base+3;
-      // prima_neta column: skip it (we calculate it from bruta + commissions)
-      if(idxExp<0)        idxExp=base+5; // underlying;tipo;qty;strike;bruta;neta;vto
-
-      // ── Commission rates from QO bar
+      // Fallback por posición
+      // Detectar si primera columna es el ticker (no numerico, no tipo)
+      var firstData=dataRows[0]||[];
+      var firstIsUnderlying=firstData[0]&&isNaN(parseARNum(firstData[0]))&&
+        !['call','put','c','p','stock'].includes(firstData[0].toLowerCase());
+      var b=firstIsUnderlying?1:0;
+      if(iUnd<0&&firstIsUnderlying) iUnd=0;
+      if(iType<0)   iType=b+0;
+      if(iQty<0)    iQty=b+1;
+      if(iStrike<0) iStrike=b+2;
+      if(iPrima<0)  iPrima=b+3;
+      if(iExp<0)    iExp=b+4;
+      // Comisiones del QO bar
       var isARS=currentData.currency==='ARS';
       var comPct=parseFloat((document.getElementById(isARS?'qoComAR':'qoComUS')||{}).value)||0;
       var impPct=parseFloat((document.getElementById(isARS?'qoImpAR':'qoImpUS')||{}).value)||0;
       var comTotal=comPct/100*(1+impPct/100);
-
+      var defaultExp=document.getElementById('fExp')?document.getElementById('fExp').value:'';
+      if(!defaultExp) defaultExp=getExps()[0]||'';
       var count=0;
       clearLegs();
-      rows.slice(start).forEach(function(p){
+      dataRows.forEach(function(p){
         if(!p||p.every(function(c){return c==='';})){ return; }
-
-        var type=(p[idxType]||'').trim().toLowerCase();
+        var type=(p[iType]||'').trim().toLowerCase();
         if(!type) return;
         if(type==='c') type='call';
         else if(type==='p') type='put';
         else if(['acc','accion','acción','share','stock'].includes(type)) type='stock';
         if(type!=='call'&&type!=='put'&&type!=='stock') return;
-
-        // ── parseARNum handles "6902,9" → 6902.9 and "6500" → 6500
-        var qty=parseARNum(p[idxQty]);
-        var strike=parseARNum(p[idxStrike]);
-        var primaRaw=parseARNum(p[idxPrimaBruta])||0;
-
-        if(isNaN(qty)||qty===0||isNaN(strike)||strike<=0) return;
-
-        // ── Apply commissions to get prima neta
-        // Buy (qty>0): pay more = prima_bruta × (1 + com_total)
-        // Sell (qty<0): receive less = prima_bruta × (1 - com_total)
+        var qty=parseARNum(p[iQty]);
+        var strike=type==='stock'?parseARNum(p[iStrike])||0:parseARNum(p[iStrike]);
+        var primaRaw=parseARNum(p[iPrima])||0;
+        if(isNaN(qty)||qty===0) return;
+        if(type!=='stock'&&(isNaN(strike)||strike<=0)) return;
+        // Si es stock y no hay strike, usar primaRaw como precio de entrada
+        if(type==='stock'&&(!strike||isNaN(strike))) strike=primaRaw;
+        // Vencimiento: columna > app configurada
+        var exp=(iExp>=0&&p[iExp]&&p[iExp].trim())?p[iExp].trim():defaultExp;
+        // Aplicar comisiones a la prima bruta
         var primaNeta=qty>0?primaRaw*(1+comTotal):primaRaw*(1-comTotal);
-
-        // ── Expiration: try column, then match to chain, then first available
-        var exp='';
-        if(idxExp>=0&&p[idxExp]) exp=p[idxExp].trim();
-        if(!exp){
-          // Try to match to available exps
-          var avail=getExps();
-          exp=avail[0]||'';
-        }
-
-        // ── Strike normalization (same as buildNetPositions key)
-        var strikeNorm=strike; // parseARNum already gives correct float
-
         legCnt++;
         legs.push({
-          id:legCnt,
-          type:type,
-          strike:strikeNorm,
-          exp:exp,
-          qty:qty,
-          premium:primaNeta, // full precision, no rounding
-          _primaRaw:primaRaw,
-          _comTotal:comTotal,
-          lot:type==='stock'?1:100,
-          _isStock:type==='stock'
+          id:legCnt,type:type,strike:strike,exp:exp,qty:qty,
+          premium:primaNeta,_primaRaw:primaRaw,_comTotal:comTotal,
+          lot:type==='stock'?1:100,_isStock:type==='stock'
         });
         count++;
       });
-
       if(!count){
-        alert('No se pudieron leer operaciones.\n\nFormato esperado:\nunderlying;tipo;cantidad;strike;prima_bruta;prima_neta;vencimiento\n\nNota: strikes con coma decimal (ej: 6902,9) son soportados.');
+        alert('No se pudieron leer operaciones.\n\nFormato: underlying;tipo;cantidad;strike;prima;vencimiento\nEl vencimiento es opcional.');
         return;
       }
       renderLegsPanel();
-      // Feedback
       var fb=document.getElementById('qoFeedback');
       if(fb){fb.textContent=count+' operaciones importadas';setTimeout(function(){fb.textContent='';},4000);}
     };
     reader.readAsText(file);
   };
   inp.click();
+}
+
+
+function updateQOMonto(){
+  var type=document.getElementById('qoType').value;
+  var prima=parseFloat(document.getElementById('qoPrima').value);
+  var qty=parseFloat(document.getElementById('qoQty').value)||0;
+  var el=document.getElementById('qoMonto');
+  if(!el) return;
+  if(isNaN(prima)||prima<=0||qty===0){el.textContent='';return;}
+  // lot: opciones=100, acciones=1
+  var lot=type==='stock'?1:100;
+  // monto bruto = prima * |qty| * lot
+  var monto=prima*Math.abs(qty)*lot;
+  // compra (qty>0) = pago = rojo; venta (qty<0) = cobro = verde
+  var esPago=qty>0;
+  var cs=currSym();
+  var montoStr=cs+(monto>=1000?monto.toLocaleString('es-AR',{maximumFractionDigits:0}):monto.toFixed(2));
+  el.textContent=(esPago?'- ':'+  ')+montoStr;
+  el.style.color=esPago?'var(--r2)':'var(--g2)';
 }
 
 
@@ -3980,7 +3998,7 @@ loadData();
 <!-- GLOBAL ORDER BAR - fixed footer -->
 <div id="globalQOBar" style="position:fixed;bottom:0;left:0;right:0;z-index:500;background:var(--bg2);border-top:2px solid var(--bdr2);padding:7px 16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;box-shadow:0 -4px 20px rgba(0,0,0,.35)">
   <span style="font-size:10px;font-weight:700;color:var(--vl);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Cargar orden</span>
-  <select id="qoType" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onchange="populateQOStrikes()">
+  <select id="qoType" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onchange="populateQOStrikes();updateQOMonto()">
     <option value="call">Call</option>
     <option value="put">Put</option>
     <option value="stock">Acciones</option>
@@ -3989,8 +4007,8 @@ loadData();
   <select id="qoStrike" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none;min-width:100px" onchange="qoAutoFillPrima()">
     <option value="">Strike...</option>
   </select>
-  <input type="number" id="qoPrima" placeholder="Prima bruta" style="width:96px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()">
-  <input type="number" id="qoQty" placeholder="Lotes (+/-)" value="1" style="width:74px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()">
+  <input type="number" id="qoPrima" placeholder="Prima bruta" style="width:96px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()" oninput="updateQOMonto()">
+  <input type="number" id="qoQty" placeholder="Lotes (+/-)" value="1" style="width:74px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()" oninput="updateQOMonto()">
   <span style="font-size:10px;color:var(--t3);white-space:nowrap">Com.AR%</span>
   <input type="number" id="qoComAR" value="0.5" step="0.1" min="0" max="10" style="width:52px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none">
   <span style="font-size:9px;color:var(--t3)">+imp</span>
@@ -4000,7 +4018,8 @@ loadData();
   <span style="font-size:9px;color:var(--t3)">+imp</span>
   <input type="number" id="qoImpUS" value="0" step="1" min="0" max="100" style="width:46px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none">
   <button class="btn btn-sm" onclick="quickOrderFill()" style="font-weight:800;min-width:68px">Cargar</button>
-  <span id="qoFeedback" style="font-size:10px;color:var(--g2);font-family:var(--mono);min-width:100px"></span>
+  <span id="qoMonto" style="font-size:12px;font-weight:800;font-family:var(--mono);min-width:120px"></span>
+  <span id="qoFeedback" style="font-size:10px;color:var(--g2);font-family:var(--mono);min-width:80px"></span>
   <span style="font-size:10px;color:var(--t3);margin-left:auto;white-space:nowrap">Neg=venta &middot; Prima vacia=last</span>
 </div>
 <div style="height:56px"></div>
