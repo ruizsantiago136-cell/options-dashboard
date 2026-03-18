@@ -2877,22 +2877,25 @@ function renderCashCarry(){
   if(!el) return;
   var calls=currentData.calls,puts=currentData.puts,spot=currentData.spot;
   var strikes=currentData.strikes,exp=currentData.exp,dte=currentData.dte||calcDTE(currentData.exp)||1;
-  var rf=getRF(); // risk-free rate as decimal
+  var rf=getRF();
   var cs=currSym();
+  var isBig=spot>500;
 
   if(!spot||!strikes.length||!exp){
-    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Seleccion\u00e1 un ticker y vencimiento.</div>';
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Selección ticker y vencimiento primero.</div>';
     return;
   }
 
   var cm={};calls.forEach(function(d){cm[d._sk]=d;});
   var pm={};puts.forEach(function(d){pm[d._sk]=d;});
 
-  function getMid(d){
+  // Prioridad: last negociado -> mid bid/ask
+  function getLast(d){
     if(!d) return null;
-    var b=parseFloat(d.bid),a=parseFloat(d.ask),lp=parseFloat(d.lastPrice);
-    if(!isNaN(b)&&!isNaN(a)&&b>0&&a>0) return(b+a)/2;
+    var lp=parseFloat(d.lastPrice);
     if(!isNaN(lp)&&lp>0) return lp;
+    var b=parseFloat(d.bid),a=parseFloat(d.ask);
+    if(!isNaN(b)&&!isNaN(a)&&b>0&&a>0) return(b+a)/2;
     return null;
   }
 
@@ -2900,59 +2903,48 @@ function renderCashCarry(){
   strikes.forEach(function(K){
     var c=cm[K],p=pm[K];
     if(!c||!p) return;
-    var callP=getMid(c),putP=getMid(p);
+    var callP=getLast(c),putP=getLast(p);
     if(callP===null||putP===null) return;
-    // Costo = Stock - Call + Put
+    // Costo sintetico = Spot - Call(venta) + Put(compra)
     var costo=spot-callP+putP;
     if(costo<=0) return;
-    // Rendimiento total = K/Costo - 1
+    // Rendimiento = K/Costo - 1
     var rend=(K/costo)-1;
-    // TNA = rend * 365/dte
+    // TNA = rend x 365/DTE
     var tna=rend*(365/dte);
-    // Only show if TNA > risk-free rate
     if(tna<=rf) return;
     rows.push({K:K,costo:costo,rend:rend,tna:tna,callP:callP,putP:putP});
   });
 
   if(!rows.length){
-    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Ning\u00fan strike supera la TLR ('+(rf*100).toFixed(2)+'%). Mercado bien arbitrado.</div>';
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Ningún strike supera la TLR ('+(rf*100).toFixed(2)+'%). Mercado bien arbitrado.</div>';
     return;
   }
 
-  // Sort by TNA descending
   rows.sort(function(a,b){return b.tna-a.tna;});
   var best=rows[0].tna;
 
   var rowsHtml=rows.map(function(row,i){
     var cls=i===0?'cc-best':'';
-    var isBig=spot>500;
-    return '<tr class="'+cls+'">'+
-      '<td>'+cs+(isBig?row.K.toFixed(0):row.K.toFixed(2))+'</td>'+
-      '<td>'+cs+(isBig?row.costo.toFixed(0):row.costo.toFixed(2))+'</td>'+
-      '<td>'+cs+(isBig?row.callP.toFixed(0):row.callP.toFixed(2))+'</td>'+
-      '<td>'+cs+(isBig?row.putP.toFixed(0):row.putP.toFixed(2))+'</td>'+
-      '<td>'+(row.rend*100).toFixed(2)+'%</td>'+
-      '<td style="color:'+(row.tna>=best*0.95?'var(--gold2)':'var(--g2)')+';font-weight:700">'+
-        (row.tna*100).toFixed(2)+'%'+
-      '</td>'+
-    '</tr>';
+    return '<tr class="'+cls+'" onclick="loadCashCarry('+row.K+','+row.callP+','+row.putP+')" style="cursor:pointer" title="Cargar estrategia sintética">'
+      +'<td style="font-weight:700;color:var(--vb)">'+cs+(isBig?row.K.toFixed(0):row.K.toFixed(2))+'</td>'
+      +'<td>'+cs+(isBig?row.costo.toFixed(0):row.costo.toFixed(2))+'</td>'
+      +'<td>'+cs+(isBig?row.callP.toFixed(0):row.callP.toFixed(2))+'</td>'
+      +'<td>'+cs+(isBig?row.putP.toFixed(0):row.putP.toFixed(2))+'</td>'
+      +'<td>'+(row.rend*100).toFixed(2)+'%</td>'
+      +'<td style="color:'+(row.tna>=best*0.95?'var(--gold2)':'var(--g2)')+';font-weight:700">'+(row.tna*100).toFixed(2)+'%</td>'
+      +'</tr>';
   }).join('');
 
-  el.innerHTML='<table class="cc-tbl">'+
-    '<thead><tr>'+
-      '<th>Strike</th>'+
-      '<th>Costo</th>'+
-      '<th>Call</th>'+
-      '<th>Put</th>'+
-      '<th>Rdto</th>'+
-      '<th>TNA</th>'+
-    '</tr></thead>'+
-    '<tbody>'+rowsHtml+'</tbody>'+
-  '</table>'+
-  '<div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">'+
-    'TLR ref: '+(rf*100).toFixed(2)+'% \u00b7 DTE: '+dte+' \u00b7 '+
-    'Fila dorada = mejor TNA. Precios: mid bid/ask o \u00faltimo negociado.'+
-  '</div>';
+  el.innerHTML='<table class="cc-tbl">'
+    +'<thead><tr>'
+      +'<th>Strike</th><th>Costo</th><th>Call (vta)</th><th>Put (cpa)</th><th>Rdto</th><th>TNA</th>'
+    +'</tr></thead>'
+    +'<tbody>'+rowsHtml+'</tbody>'
+    +'</table>'
+    +'<div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">'
+      +'TLR: '+(rf*100).toFixed(2)+'% · DTE: '+dte+' · Precios: last negociado. Click en fila = cargar sintética.'
+    +'</div>';
 }
 
 function runOpportunities(){
@@ -3997,6 +3989,37 @@ function updateQOMonto(){
   var montoStr=cs+(monto>=1000?monto.toLocaleString('es-AR',{maximumFractionDigits:0}):monto.toFixed(2));
   el.textContent=(esPago?'- ':'+  ')+montoStr;
   el.style.color=esPago?'var(--r2)':'var(--g2)';
+}
+
+
+function loadCashCarry(K, callP, putP){
+  // Estrategia: +spot (acciones) + put comprada - call vendida al mismo strike
+  var exp=currentData.exp;
+  var ticker=currentData.ticker;
+  var lot=100; // lote de opciones
+  clearLegs();
+  // 1. Acciones: qty = lot (100 acciones por lote de opciones)
+  legCnt++;
+  legs.push({id:legCnt,type:'stock',strike:currentData.spot,exp:exp,qty:lot,
+    premium:currentData.spot,_primaRaw:currentData.spot,lot:1,_isStock:true});
+  // 2. Put comprada
+  legCnt++;
+  legs.push({id:legCnt,type:'put',strike:K,exp:exp,qty:1,
+    premium:putP,_primaRaw:putP,lot:lot,_isStock:false});
+  // 3. Call vendida
+  legCnt++;
+  legs.push({id:legCnt,type:'call',strike:K,exp:exp,qty:-1,
+    premium:callP,_primaRaw:callP,lot:lot,_isStock:false});
+  switchTab('strategies');
+  syncIVSliders();
+  populateQOExp();
+  renderLegsPanel();
+  // Toast
+  var toast=document.createElement('div');
+  toast.style.cssText='position:fixed;bottom:80px;right:24px;z-index:9999;background:rgba(124,58,237,.95);color:#fff;font-family:var(--sans);font-size:12px;font-weight:700;padding:10px 18px;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.4)';
+  toast.textContent='Sint\u00e9tica cargada: Strike $'+K+' \u2192 Estrategias';
+  document.body.appendChild(toast);
+  setTimeout(function(){toast.style.opacity='0';toast.style.transition='opacity .4s';setTimeout(function(){toast.remove();},400);},2500);
 }
 
 
