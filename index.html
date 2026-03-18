@@ -1964,16 +1964,25 @@ function stratPreset(name){
   var _avgIVP=getAvgIV('put')/100||0.25;
   const ivc=_ivCallUserSet?parseFloat(_callSlider.value)/100:_avgIVC;
   const ivp=_ivPutUserSet?parseFloat(_putSlider.value)/100:_avgIVP;
-  function atm(type){
-    const iv=type==='call'?ivc:ivp;
-    const p=bsCalc(type,spot,atmK,T,r,iv).price;
-    return isNaN(p)?2:parseFloat(p.toFixed(2));
-  }
-  function otmp(type,K){
-    const iv=type==='call'?ivc:ivp;
-    const p=bsCalc(type,spot,K,T,r,iv).price;
+  // Obtener last price real de la chain; fallback a BS si no hay
+  function getLast(type,K){
+    var d=rawData.find(function(r){
+      return r.ticker===currentData.ticker&&r.type===type
+        &&Math.abs(parseFloat(r.strike)-K)<0.05&&r.expiration===exp;
+    });
+    if(d){
+      var lp=parseFloat(d.lastPrice);
+      if(!isNaN(lp)&&lp>0) return lp;
+      var b=parseFloat(d.bid),a=parseFloat(d.ask);
+      if(!isNaN(b)&&!isNaN(a)&&b>0&&a>0) return parseFloat(((b+a)/2).toFixed(2));
+    }
+    // Fallback BS
+    var iv=type==='call'?ivc:ivp;
+    var p=bsCalc(type,spot,K,T,r,iv).price;
     return isNaN(p)||p<0?0.01:parseFloat(p.toFixed(2));
   }
+  function atm(type){ return getLast(type,atmK); }
+  function otmp(type,K){ return getLast(type,K); }
   // Use actual chain strikes (nearest to ATM for spreads/strangle)
   const strikes=currentData.strikes||[];
   function nearestStrike(target){
@@ -3841,11 +3850,12 @@ function syncIVSliders(){
 function exportLegsCSV(){
   if(!legs.length){alert('No hay patas cargadas.');return;}
   // Formato simple: underlying;tipo;cantidad;strike;prima;vencimiento
-  var rows=['underlying;tipo;cantidad;strike;prima;vencimiento'];
+  var rows=['underlying;tipo;cantidad;strike;prima_bruta;vencimiento'];
   legs.forEach(function(l){
+    // Siempre exportar prima bruta (antes de comisiones)
     var prima=l._primaRaw!==undefined?l._primaRaw:l.premium;
     var strikeStr=String(l.strike).replace('.',',');
-    var primaStr=String(prima).replace('.',',');
+    var primaStr=parseFloat(prima).toFixed(2).replace('.',',');
     rows.push([
       currentData.ticker||'',
       l._isStock?'stock':l.type,
