@@ -172,7 +172,7 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
 .ph-leg{display:flex;gap:10px}
 .ph-li{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--t2)}
 .ph-dot{width:8px;height:8px;border-radius:50%}
-.po-scroll{overflow-y:auto;max-height:370px}
+.po-scroll{overflow-y:visible;max-height:none}
 .po-tbl{width:100%;border-collapse:collapse}
 .po-tbl thead th{padding:6px 10px;font-size:9px;text-transform:uppercase;letter-spacing:.06em;font-weight:700;color:var(--t3);background:var(--bg3);position:sticky;top:0;z-index:2;text-align:right;font-family:var(--sans);line-height:1.4;border-bottom:1px solid var(--bdr2)}
 .po-tbl thead th:first-child,.po-tbl thead th:nth-child(2){text-align:left}
@@ -341,27 +341,31 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
     <table class="ct">
       <thead>
         <tr class="hr1">
-          <th class="thc bg3" colspan="3">Precio</th>
-          <th class="thc bg3" colspan="2">Actividad</th>
-          <th class="thc bg3" colspan="2">Mercado</th>
+          <th class="thc bg3">BS</th>
           <th class="thd bg2 sl" colspan="4" style="text-align:center;border-bottom:1px solid rgba(96,165,250,.2)">Griegas CALL</th>
+          <th class="thc bg3">Vol</th><th class="thc bg3">OI</th>
+          <th class="thc bg3">Bid</th><th class="thc bg3">Last</th><th class="thc bg3">Ask</th>
+          <th class="thc bg3">Chg%</th><th class="thc bg3">VI</th>
           <th class="ths bg3" rowspan="2" style="vertical-align:middle;font-size:10px;min-width:74px">STRIKE</th>
+          <th class="thp2 bg3">VI</th><th class="thp2 bg3">Chg%</th>
+          <th class="thp2 bg3">Bid</th><th class="thp2 bg3">Last</th><th class="thp2 bg3">Ask</th>
+          <th class="thp2 bg3">OI</th><th class="thp2 bg3">Vol</th>
           <th class="thd bg2 sr3" colspan="4" style="text-align:center;border-bottom:1px solid rgba(96,165,250,.2)">Griegas PUT</th>
-          <th class="thp2 bg3" colspan="2">Mercado</th>
-          <th class="thp2 bg3" colspan="2">Actividad</th>
-          <th class="thp2 bg3" colspan="3">Precio</th>
+          <th class="thp2 bg3">BS</th>
         </tr>
         <tr class="hr2">
-          <th class="thc bg3">Last</th><th class="thc bg3">BS Te&oacute;rico</th><th class="thc bg3">Bid / Ask</th>
-          <th class="thc bg3">Volumen</th><th class="thc bg3">OI</th>
-          <th class="thc bg3">IV</th><th class="thc bg3">% Chg</th>
-          <th class="thd bg2 sl">&Delta; Delta</th><th class="thgm bg2">&Gamma; Gamma</th>
-          <th class="thv bg2">&nu; Vega</th><th class="tht bg2">&Theta; Theta</th>
-          <th class="thd bg2 sr3">&Delta; Delta</th><th class="thgm bg2">&Gamma; Gamma</th>
-          <th class="thv bg2">&nu; Vega</th><th class="tht bg2">&Theta; Theta</th>
-          <th class="thp2 bg3">IV</th><th class="thp2 bg3">% Chg</th>
-          <th class="thp2 bg3">Volumen</th><th class="thp2 bg3">OI</th>
-          <th class="thp2 bg3">Bid / Ask</th><th class="thp2 bg3">BS Te&oacute;rico</th><th class="thp2 bg3">Last</th>
+          <th class="thc bg3">Te&oacute;rico</th>
+          <th class="thd bg2 sl">&Delta;</th><th class="thgm bg2">&Gamma;</th>
+          <th class="thv bg2">&nu;</th><th class="tht bg2">&Theta;</th>
+          <th class="thc bg3"></th><th class="thc bg3"></th>
+          <th class="thc bg3"></th><th class="thc bg3"></th><th class="thc bg3"></th>
+          <th class="thc bg3"></th><th class="thc bg3"></th>
+          <th class="thp2 bg3"></th><th class="thp2 bg3"></th>
+          <th class="thp2 bg3"></th><th class="thp2 bg3"></th><th class="thp2 bg3"></th>
+          <th class="thp2 bg3"></th><th class="thp2 bg3"></th>
+          <th class="thd bg2 sr3">&Delta;</th><th class="thgm bg2">&Gamma;</th>
+          <th class="thv bg2">&nu;</th><th class="tht bg2">&Theta;</th>
+          <th class="thp2 bg3">Te&oacute;rico</th>
         </tr>
       </thead>
       <tbody id="chainBody"><tr><td colspan="23" style="text-align:center;padding:50px;color:var(--t3)">&#x21F3; Cargando&hellip;</td></tr></tbody>
@@ -1233,11 +1237,25 @@ function updateStats(){
   var _varEl=document.getElementById('spotVar');
   var _volEl=document.getElementById('spotVol');
   if(_md&&_varEl&&_volEl){
-    var _vp=_md.varPct;
+    // Calcular var% = (spot_actual - close_ultima_rueda) / close_ultima_rueda
+    // spot_actual = currentData.spot (el que ya estamos mostrando)
+    // close_ultima_rueda = último valor de _md.rows
+    var _vp=0;
+    var _spotNow=currentData.spot||0;
+    if(_md.rows&&_md.rows.length>=1&&_spotNow>0){
+      var _lastClose=_md.rows[_md.rows.length-1].close;
+      if(_lastClose>0) _vp=(_spotNow-_lastClose)/_lastClose;
+    }
+    // Fallback: usar varPct del CSV si no hay spot cargado
+    if(_vp===0&&_md.varPct) _vp=_md.varPct;
     var _isPos=_vp>=0;
-    _varEl.textContent=(_isPos?'+':'')+(_vp*100).toFixed(2)+'%';
-    _varEl.style.color=_isPos?'var(--g2)':'var(--r2)';
-    _volEl.textContent='Vol: '+(_md.volume||0).toLocaleString('es-AR');
+    if(_vp!==0){
+      _varEl.textContent=(_isPos?'+':'')+(_vp*100).toFixed(2)+'%';
+      _varEl.style.color=_isPos?'var(--g2)':'var(--r2)';
+    } else {
+      _varEl.textContent='';
+    }
+    _volEl.textContent=_md.volume>0?'Vol: '+_md.volume.toLocaleString('es-AR'):'';
   } else {
     if(_varEl) _varEl.textContent='';
     if(_volEl) _volEl.textContent='';
@@ -1257,6 +1275,14 @@ function fLast(v){
   return '<span style="color:var(--t);font-weight:600">'+s+n.toFixed(2)+'</span>';
 }
 // Full data version - tries lastPrice, then bid/ask mid as fallback
+function fMono(v){
+  var n=parseFloat(v);
+  if(isNaN(n)||n<=0) return '-';
+  var s=currSym();
+  return s+(currentData.currency==='ARS'&&n>=100
+    ?n.toLocaleString('es-AR',{maximumFractionDigits:0})
+    :n.toFixed(2));
+}
 function fLastFull(d){
   var lp=parseFloat(d.lastPrice);
   if(!isNaN(lp)&&lp>0) return fLast(lp);
@@ -1348,22 +1374,34 @@ function renderChain(){
     // Click handler to load leg into strategy builder
     const cClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.lastPrice||0)+')" title="Click: cargar en estrategia" style="cursor:pointer"':'';
     const pClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.lastPrice||0)+')" title="Click: cargar en estrategia" style="cursor:pointer"':'';
+    // Click handlers for bid and ask
+    const cBidClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.bid||0)+')" title="Cargar bid" style="cursor:pointer;color:var(--r2)"':'';
+    const cAskClick=c?'onclick="loadLegFromChain(\'call\','+sk+',\''+exp+'\','+(c.ask||0)+')" title="Cargar ask" style="cursor:pointer;color:var(--g2)"':'';
     const cCols=c
-      ?'<td class="tdc last" '+cClick+'>'+fLastFull(c)+'</td>'
-       +'<td class="tdc">'+fTheo(bC.price)+'</td><td class="tdc">'+fBA(c.bid,c.ask)+'</td>'
-       +'<td class="tdc vol">'+fV(c.volume)+'</td><td class="tdc vol">'+fV(c.openInterest)+'</td>'
-       +'<td class="tdc">'+ivChip(c._iv)+'</td><td class="tdc">'+fPct(c.percentChange)+'</td>'
+      ?'<td class="tdc">'+fTheo(bC.price)+'</td>'
        +'<td class="tdc sl">'+fDelta(bC.delta)+'</td><td class="tdc">'+fGamma(bC.gamma)+'</td>'
        +'<td class="tdc">'+fVega(bC.vega)+'</td><td class="tdc">'+fTheta(bC.theta)+'</td>'
-      :eC+eC+eC+eC+eC+eC+eC+'<td class="tdc sl na">-</td>'+eC+eC+eC;
+       +'<td class="tdc vol">'+fV(c.volume)+'</td><td class="tdc vol">'+fV(c.openInterest)+'</td>'
+       +'<td class="tdc" '+cBidClick+'>'+fMono(c.bid)+'</td>'
+       +'<td class="tdc last" '+cClick+'>'+fLastFull(c)+'</td>'
+       +'<td class="tdc" '+cAskClick+'>'+fMono(c.ask)+'</td>'
+       +'<td class="tdc">'+fPct(c.percentChange)+'</td>'
+       +'<td class="tdc">'+ivChip(c._iv)+'</td>'
+      :'<td class="tdc sl na">-</td>'+eC+eC+eC+eC+eC+eC+eC+eC+eC+eC+eC;
+    const pBidClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.bid||0)+')" title="Cargar bid" style="cursor:pointer;color:var(--r2)"':'';
+    const pAskClick=p?'onclick="loadLegFromChain(\'put\','+sk+',\''+exp+'\','+(p.ask||0)+')" title="Cargar ask" style="cursor:pointer;color:var(--g2)"':'';
     const pCols=p
-      ?'<td class="tdp sr3">'+fDelta(bP.delta)+'</td><td class="tdp">'+fGamma(bP.gamma)+'</td>'
-       +'<td class="tdp">'+fVega(bP.vega)+'</td><td class="tdp">'+fTheta(bP.theta)+'</td>'
-       +'<td class="tdp">'+ivChip(p._iv)+'</td><td class="tdp">'+fPct(p.percentChange)+'</td>'
-       +'<td class="tdp vol">'+fV(p.volume)+'</td><td class="tdp vol">'+fV(p.openInterest)+'</td>'
-       +'<td class="tdp">'+fBA(p.bid,p.ask)+'</td><td class="tdp">'+fTheo(bP.price)+'</td>'
+      ?'<td class="tdp">'+ivChip(p._iv)+'</td>'
+       +'<td class="tdp">'+fPct(p.percentChange)+'</td>'
+       +'<td class="tdp" '+pBidClick+'>'+fMono(p.bid)+'</td>'
        +'<td class="tdp last" '+pClick+'>'+fLastFull(p)+'</td>'
-      :'<td class="tdp sr3 na">-</td>'+eC+eC+eC+eC+eC+eC+eC+eC+eC+eC;
+       +'<td class="tdp" '+pAskClick+'>'+fMono(p.ask)+'</td>'
+       +'<td class="tdp vol">'+fV(p.openInterest)+'</td>'
+       +'<td class="tdp vol">'+fV(p.volume)+'</td>'
+       +'<td class="tdp sr3">'+fDelta(bP.delta)+'</td><td class="tdp">'+fGamma(bP.gamma)+'</td>'
+       +'<td class="tdp">'+fVega(bP.vega)+'</td><td class="tdp">'+fTheta(bP.theta)+'</td>'
+       +'<td class="tdp">'+fTheo(bP.price)+'</td>'
+      :eC+eC+eC+eC+eC+eC+eC+'<td class="tdp sr3 na">-</td>'+eC+eC+eC+eC;
     return '<tr class="'+rc+'">'+cCols+'<td class="tds">'+skB+'</td>'+pCols+'</tr>';
   });
   document.getElementById('chainBody').innerHTML=rows.length?rows.join('')
