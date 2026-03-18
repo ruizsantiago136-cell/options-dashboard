@@ -559,6 +559,7 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
           <div style="padding:14px;height:300px;position:relative"><canvas id="chartPayoff"></canvas></div>
         </div>
         <div class="metrics-grid" id="stratMetrics" style="margin-bottom:8px"></div>
+        <div id="stratGarantias" style="display:none;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:7px 14px;margin-bottom:8px;font-size:11px;font-family:var(--mono)"><span style="color:var(--gold2);font-weight:700">Garantias requeridas: </span><span class="g-val" style="font-weight:800;color:var(--t)"></span><span style="color:var(--t3);font-size:9px;margin-left:8px">last x lotes x 100 x 1,45</span></div>
         <!-- Table below -->
         <div style="font-size:9px;font-weight:700;color:var(--vl);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px;display:flex;align-items:center;gap:12px">
           <span>Tabla de Payoff</span>
@@ -967,7 +968,7 @@ function parseMarketCSV(txt){
     if(!ticker) return;
     if(!result[ticker]) result[ticker]={rows:[],last:0,varPct:0,volume:0,vh10:NaN,vh20:NaN,vh30:NaN,vh40:NaN,vh60:NaN,vh12m:NaN};
     var d=result[ticker];
-    var close=parseFloat(cols[idxClose]);
+    var close=parseARNum(cols[idxClose]); // handles AR format: 7.320 → 7320
     var vol=parseARNum(cols[idxVol])||0;
     var varPct=parseARPct(cols[idxVar]);
     // VH values in CSV are decimals (0.49 = 49%) — multiply by 100 for display
@@ -980,7 +981,10 @@ function parseMarketCSV(txt){
     // VH-YTD is also a decimal (0.74 = 74%) like VH(10..60)
     var ytd=parseARNum((cols[idxYTD]||'').replace('%','').trim());
     if(!isNaN(close)&&close>0){
-      d.rows.push({date:(cols[idxDate]||'').trim(),close:close,volume:vol,vh10:isNaN(vh10)?null:vh10,vh20:isNaN(vh20)?null:vh20,vh30:isNaN(vh30)?null:vh30,vh40:isNaN(vh40)?null:vh40,vh60:isNaN(vh60)?null:vh60});
+      var _ds=(cols[idxDate]||'').trim();
+      var _dp=_ds.split(/[\/ ]/);
+      var _dms=(_dp.length>=3)?new Date(parseInt(_dp[2]),parseInt(_dp[1])-1,parseInt(_dp[0])).getTime():0;
+      d.rows.push({date:_ds,dateMs:_dms,close:close,volume:vol,vh10:isNaN(vh10)?null:vh10,vh20:isNaN(vh20)?null:vh20,vh30:isNaN(vh30)?null:vh30,vh40:isNaN(vh40)?null:vh40,vh60:isNaN(vh60)?null:vh60});
       d.last=close;d.volume=vol;
       if(!isNaN(varPct)) d.varPct=varPct;
       if(!isNaN(vh10)) d.vh10=vh10;
@@ -989,6 +993,16 @@ function parseMarketCSV(txt){
       if(!isNaN(vh40)) d.vh40=vh40;
       if(!isNaN(vh60)) d.vh60=vh60;
       if(!isNaN(ytd)&&ytd>0) d.vh12m=ytd*100; // ytd is decimal (0.74), store as percentage (74)
+    }
+  });
+  // Sort each ticker's rows by date ascending so rows[last] = most recent
+  Object.keys(result).forEach(function(t){
+    result[t].rows.sort(function(a,b){return a.dateMs-b.dateMs;});
+    // Update last/volume from sorted last row
+    if(result[t].rows.length){
+      var _lr=result[t].rows[result[t].rows.length-1];
+      result[t].last=_lr.close;
+      result[t].volume=_lr.volume;
     }
   });
   return result;
@@ -1236,27 +1250,33 @@ function updateStats(){
   var _md=marketData[currentData.ticker];
   var _varEl=document.getElementById('spotVar');
   var _volEl=document.getElementById('spotVol');
-  if(_md&&_varEl&&_volEl){
-    // Calcular var% = (spot_actual - close_ultima_rueda) / close_ultima_rueda
-    // spot_actual = currentData.spot (el que ya estamos mostrando)
-    // close_ultima_rueda = último valor de _md.rows
-    var _vp=0;
-    var _spotNow=currentData.spot||0;
-    if(_md.rows&&_md.rows.length>=1&&_spotNow>0){
-      var _lastClose=_md.rows[_md.rows.length-1].close;
-      if(_lastClose>0) _vp=(_spotNow-_lastClose)/_lastClose;
+  // var% = (spot_actual - close_ultima_rueda) / close_ultima_rueda
+  // Aplica para cualquier ticker que tenga filas en market_data.csv
+  var _spotNow=currentData.spot||0;
+  var _vp=0;
+  if(_md&&_md.rows&&_md.rows.length>=1&&_spotNow>0){
+    var _rows=_md.rows;
+    var _lastClose=_rows[_rows.length-1].close;
+    var _refClose=_lastClose;
+    // Si el spot es muy cercano al ultimo close (misma sesion), usar anteultimo
+    if(_rows.length>=2&&Math.abs(_spotNow-_lastClose)/_lastClose<0.001){
+      _refClose=_rows[_rows.length-2].close;
     }
-    // Fallback: usar varPct del CSV si no hay spot cargado
-    if(_vp===0&&_md.varPct) _vp=_md.varPct;
-    var _isPos=_vp>=0;
+    if(_refClose>0) _vp=(_spotNow-_refClose)/_refClose;
+  }
+  if(_varEl){
     if(_vp!==0){
+      var _isPos=_vp>=0;
       _varEl.textContent=(_isPos?'+':'')+(_vp*100).toFixed(2)+'%';
       _varEl.style.color=_isPos?'var(--g2)':'var(--r2)';
     } else {
-      _varEl.textContent='';
+      _varEl.textContent=''; // No hay datos de mercado para este ticker
     }
-    _volEl.textContent=_md.volume>0?'Vol: '+_md.volume.toLocaleString('es-AR'):'';
-  } else {
+  }
+  if(_volEl){
+    _volEl.textContent=(_md&&_md.volume>0)?'Vol: '+_md.volume.toLocaleString('es-AR'):'';
+  }
+  if(!_md||!(_md.rows&&_md.rows.length)){
     if(_varEl) _varEl.textContent='';
     if(_volEl) _volEl.textContent='';
   }
@@ -1879,6 +1899,38 @@ function renderStrategy(){
   document.getElementById('stratMetrics').innerHTML=mets.map(function(m){
     return '<div class="mc"><div class="mc-lbl">'+m.lbl+'</div><div class="mc-val" style="color:'+m.c+'">'+m.val+'</div></div>';
   }).join('');
+
+  // ── Garantías requeridas (solo patas short de opciones) ──
+  var _garantias=0;
+  var _net2=buildNetPositions();
+  _net2.open.forEach(function(pos){
+    if(pos._isStock) return; // acciones no requieren garantía
+    if(pos.netQty>=0) return; // solo short (qty neta negativa)
+    // Buscar last price de esta opción en rawData
+    var _dg=rawData.find(function(r){
+      return r.ticker===currentData.ticker&&r.type===pos.type
+        &&Math.abs(parseFloat(r.strike)-pos.strike)<0.01&&r.expiration===pos.exp;
+    });
+    var _lastG=0;
+    if(_dg){
+      var _lpg=parseFloat(_dg.lastPrice);
+      var _bg=parseFloat(_dg.bid),_ag=parseFloat(_dg.ask);
+      if(!isNaN(_bg)&&!isNaN(_ag)&&_bg>0&&_ag>0) _lastG=(_bg+_ag)/2;
+      else if(!isNaN(_lpg)&&_lpg>0) _lastG=_lpg;
+    }
+    if(_lastG>0){
+      _garantias+=_lastG*Math.abs(pos.netQty)*(pos.lot||100)*1.45;
+    }
+  });
+  var _gEl=document.getElementById('stratGarantias');
+  if(_gEl){
+    if(_garantias>0){
+      _gEl.style.display='';
+      _gEl.querySelector('.g-val').textContent=currSym()+_garantias.toLocaleString('es-AR',{maximumFractionDigits:0});
+    } else {
+      _gEl.style.display='none';
+    }
+  }
 
   resultsEl.style.display='block';
 }
@@ -2707,7 +2759,25 @@ function renderPortfolio(){
           +'<span style="font-size:12px;font-family:var(--mono);font-weight:700;color:'+pnlClr+'">'
             +'P&L: '+(sPnLValid?(sPnL>=0?'+':'')+cs+sPnL.toFixed(2):'pendiente')
           +'</span>'
-          +'<span style="font-size:10px;color:var(--t3)">'+openCount+'/'+strat.legs.length+' abiertas</span>'
+          +'<span style="font-size:10px;color:var(--t3)">'+openCount+' pos. abiertas</span>'
+          +(function(){
+            var _gPort=0;
+            _openPos.forEach(function(pos){
+              if(pos._isStock||pos.netQty>=0) return;
+              var _dPort=rawData.find(function(r){
+                return r.ticker===strat.ticker&&r.type===pos.type
+                  &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp;
+              });
+              var _lPort=0;
+              if(_dPort){var _lpPort=parseFloat(_dPort.lastPrice),_bPort=parseFloat(_dPort.bid),_aPort=parseFloat(_dPort.ask);
+                if(!isNaN(_bPort)&&!isNaN(_aPort)&&_bPort>0&&_aPort>0) _lPort=(_bPort+_aPort)/2;
+                else if(!isNaN(_lpPort)&&_lpPort>0) _lPort=_lpPort;}
+              if(_lPort>0) _gPort+=_lPort*Math.abs(pos.netQty)*(pos.lot||100)*1.45;
+            });
+            return _gPort>0
+              ?'<span style="font-size:10px;background:rgba(251,191,36,.1);border:1px solid rgba(251,191,36,.3);border-radius:5px;padding:2px 8px;color:var(--gold2);font-family:var(--mono)">Garantias: '+cs+_gPort.toLocaleString('es-AR',{maximumFractionDigits:0})+'</span>'
+              :'';
+          })()
           +'<button class="btn btn-sm btn-accent" style="padding:3px 10px" onclick="reloadStratIntoBuilder('+strat.id+')" title="Cargar en simulador">&#x21BA; Simular</button>'
           +'<button class="btn btn-sm btn-ghost" style="padding:3px 8px" onclick="deleteStrat('+strat.id+')">&#x2715;</button>'
         +'</div>'
