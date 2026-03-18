@@ -1102,8 +1102,8 @@ function updateRFHint(){
     inp.title='Tasa libre de riesgo anual en %. Vacio = 3.5%';
   }
 }
-function onTickerChange(){updateExpSelect();updateRFHint();rebuildAll();}
-function onExpChange(){rebuildAll();}
+function onTickerChange(){updateExpSelect();updateRFHint();rebuildAll();populateQOExp();}
+function onExpChange(){rebuildAll();populateQOStrikes();}
 
 function getCurrency(){
   const ticker=document.getElementById('fTicker').value;
@@ -1672,24 +1672,24 @@ function renderStrategy(){
 
   const rows=prices.map(function(S){
     const varP=(S/spot-1)*100;
-    const payExp=legs.reduce(function(sum,leg){
-      const K=parseFloat(leg.strike)||0,qty=leg.qty,prem=leg.premium||0,lot=leg.lot||100;
-      // Closed leg: add realized PnL as constant
-      if(leg._closed) return sum+(leg._realizedPnl||0);
-      if(leg._isStock||leg.type==='stock') return sum+(S-K)*qty;
-      const intr=leg.type==='call'?Math.max(0,S-K):Math.max(0,K-S);
+    // Use net positions for payoff: open positions + realized PnL from closed
+    var _net=buildNetPositions();
+    var _closedPnl=_net.closed.reduce(function(s,p){return s+p.realizedPnl;},0);
+    const payExp=_net.open.reduce(function(sum,pos){
+      const K=parseFloat(pos.strike)||0,qty=pos.netQty,prem=pos.ppcNeto,lot=pos._isStock?1:(pos.lot||100);
+      if(pos._isStock) return sum+(S-K)*qty;
+      const intr=pos.type==='call'?Math.max(0,S-K):Math.max(0,K-S);
       return sum+(intr-prem)*qty*lot;
-    },0);
-    const theos=legs.map(function(leg){
-      // Stock leg: theoretical P&L is always linear (S - entry) * qty
-      if(leg._closed) return (leg._realizedPnl||0);
-      if(leg._isStock||leg.type==='stock') return (S-parseFloat(leg.strike))*leg.qty;
-      const iv=leg.type==='call'?ivc:ivp;
+    },_closedPnl);
+    const theos=_net.open.map(function(pos){
+      if(pos._isStock) return (S-parseFloat(pos.strike))*pos.netQty;
+      const iv=pos.type==='call'?ivc:ivp;
       const T2=Math.max(Trem,1/365);
-      const bs=bsCalc(leg.type,S,leg.strike,T2,r,iv);
-      return isNaN(bs.price)?NaN:(bs.price-leg.premium)*leg.qty*(leg.lot||100);
+      const bs=bsCalc(pos.type,S,parseFloat(pos.strike),T2,r,iv);
+      return isNaN(bs.price)?NaN:(bs.price-pos.ppcNeto)*pos.netQty*(pos.lot||100);
     });
-    const payBS=theos.some(function(v){return isNaN(v);})?NaN:theos.reduce(function(a,b){return a+b;},0);
+    const payBS=theos.some(function(v){return isNaN(v);})?NaN:
+      theos.reduce(function(a,b){return a+b;},0)+_closedPnl;
     const delta=legs.reduce(function(sum,leg){
       if(leg._isStock||leg.type==='stock'){
         // Stock delta = qty (1 share = delta 1)
@@ -2035,31 +2035,105 @@ function savePortfolioToStorage(){
   try{localStorage.setItem('optchain_portfolio',data);return;}catch(e){}
   try{sessionStorage.setItem('optchain_portfolio',data);}catch(e){}
 }
-function exportPortfolio(){
-  var blob=new Blob([JSON.stringify(portfolio,null,2)],{type:'application/json'});
+function exportPortfolioCSV(){
+  if(!portfolio.length){alert('No hay estrategias guardadas.');return;}
+  var rows=['estrategia;nombre;ticker;moneda;guardado;tipo;cantidad;strike;prima_bruta;prima_neta;vencimiento;estado;precio_cierre;pnl_realizado'];
+  portfolio.forEach(function(strat,si){
+    strat.legs.forEach(function(leg){
+      var primaRaw=leg._primaRaw!==undefined?leg._primaRaw:(leg.openPrice||0);
+      var primaNeta=leg.openPrice||leg.premium||0;
+      var pnlR='';
+      if(leg.status==='closed'&&leg.closePrice!=null){
+        pnlR=((leg.closePrice-primaNeta)*leg.qty*(leg._isStock?1:(leg.lot||100))).toFixed(2).replace('.',',');
+      }
+      rows.push([
+        si+1,
+        strat.name.replace(/;/g,'_'),
+        strat.ticker,
+        strat.currency,
+        strat.savedAt.replace(/;/g,'_'),
+        leg.type,
+        leg.qty,
+        String(leg.strike).replace('.',','),
+        String(primaRaw).replace('.',','),
+        String(primaNeta).replace('.',','),
+        leg.exp,
+        leg.status||'open',
+        leg.closePrice!=null?String(leg.closePrice).replace('.',','):'',
+        pnlR
+      ].join(';'));
+    });
+  });
+  var csvContent=rows.join('\r\n');
+  var blob=new Blob([csvContent],{type:'text/csv;charset=utf-8;'});
   var a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download='portfolio_optchain.json';
+  a.download='portfolio_optchain.csv';
   a.click();
 }
-function importPortfolio(){
+function importPortfolioCSV(){
   var inp=document.createElement('input');
-  inp.type='file';inp.accept='.json';
+  inp.type='file';inp.accept='.csv,.txt,.json';
   inp.onchange=function(){
-    var file=inp.files[0];if(!file)return;
+    var file=inp.files[0];if(!file) return;
     var reader=new FileReader();
     reader.onload=function(e){
-      try{
-        var data=JSON.parse(e.target.result);
-        if(Array.isArray(data)){portfolio=data;savePortfolioToStorage();renderPortfolio();
-          alert('Portfolio importado: '+data.length+' estrategia(s).');}
-        else alert('Archivo inválido.');
-      }catch(ex){alert('Error leyendo archivo: '+ex.message);}
+      var raw=e.target.result.trim();
+      // Try JSON first
+      if(raw.charAt(0)==='['||raw.charAt(0)==='{'){
+        try{
+          var data=JSON.parse(raw);
+          if(Array.isArray(data)){portfolio=data;savePortfolioToStorage();renderPortfolio();
+            alert('Portfolio importado: '+data.length+' estrategia(s).');return;}
+        }catch(ex){}
+      }
+      // Parse CSV
+      var lines2=raw.split('\n');
+      var sep2=lines2[0].includes(';')?';':',';
+      var rows2=lines2.map(function(l){return l.split(sep2).map(function(c){return c.trim().replace(/^"|"$/g,'');});});
+      var hdr2=rows2[0].map(function(h){return h.toLowerCase();});
+      var hasHdr=hdr2.some(function(h){return isNaN(parseFloat(h.replace(',','.')))&&h.length>0;});
+      var start2=hasHdr?1:0;
+      var stratMap={};
+      rows2.slice(start2).forEach(function(p){
+        if(p.length<6||!p[0]) return;
+        var si=p[0];
+        if(!stratMap[si]){
+          stratMap[si]={id:Date.now()+parseInt(si)||Date.now(),name:p[1]||('Estrategia '+si),
+            ticker:p[2]||'',currency:p[3]||'USD',
+            savedAt:p[4]||new Date().toLocaleString('es-AR'),legs:[],status:'open'};
+        }
+        var type2=(p[5]||'call').toLowerCase();
+        var qty2=parseARNum(p[6])||0;
+        var strike2=parseARNum(p[7])||0;
+        var primaRaw2=parseARNum(p[8])||0;
+        var primaNeta2=parseARNum(p[9])||primaRaw2;
+        var exp2=p[10]||'';
+        var status2=(p[11]||'open').toLowerCase();
+        var closePrice2=p[12]?parseARNum(p[12]):null;
+        if(!qty2||!strike2) return;
+        stratMap[si].legs.push({id:Date.now()+Math.random(),type:type2,strike:strike2,
+          exp:exp2,qty:qty2,premium:primaNeta2,openPrice:primaNeta2,
+          _primaRaw:primaRaw2,lot:type2==='stock'?1:100,_isStock:type2==='stock',
+          status:status2,closePrice:closePrice2,
+          closedAt:status2==='closed'?new Date().toLocaleString('es-AR'):null,
+          ticker:stratMap[si].ticker,currency:stratMap[si].currency});
+      });
+      var newStrats=Object.values(stratMap);
+      if(!newStrats.length){alert('No se pudieron leer estrategias del CSV.');return;}
+      newStrats.forEach(function(s){
+        s.status=s.legs.every(function(l){return l.status==='closed';})?'closed':'open';
+      });
+      portfolio=newStrats;
+      savePortfolioToStorage();
+      renderPortfolio();
+      alert(newStrats.length+' estrategia(s) importada(s) desde CSV.');
     };
     reader.readAsText(file);
   };
   inp.click();
 }
+
 
 function openSaveStratModal(){
   if(!legs.length){alert('No hay patas cargadas.');return;}
@@ -3069,11 +3143,18 @@ function populateQOStrikes(){
   var expSel=document.getElementById('qoExp');
   var typeSel=document.getElementById('qoType');
   if(!sel) return;
+  // Always use current ticker from the controls bar
+  var ticker=document.getElementById('fTicker')?document.getElementById('fTicker').value:currentData.ticker;
   var exp=expSel?expSel.value:'';
   var type=typeSel?typeSel.value:'call';
+  // If type is stock, just show the spot price
+  if(type==='stock'){
+    sel.innerHTML='<option value="'+(currentData.spot||0)+'">'+(currentData.spot||0)+' (spot)</option>';
+    return;
+  }
   var strikesSet=new Set();
   rawData.forEach(function(d){
-    if(d.ticker===currentData.ticker&&(exp===''||d.expiration===exp)&&d.type===type){
+    if(d.ticker===ticker&&(exp===''||d.expiration===exp)&&d.type===type){
       strikesSet.add(parseFloat(d.strike));
     }
   });
@@ -3197,103 +3278,213 @@ function closeLegInSimVal(legId){
   renderLegsPanel();
 }
 
-function autoDetectClosed(){
-  // Group open legs by type+strike+exp, if net qty = 0 mark as closed
+function buildNetPositions(){
+  // Group legs by type:strike:exp
   var groups={};
-  legs.filter(function(l){return !l._closed;}).forEach(function(l){
-    var key=l.type+':'+l.strike+':'+l.exp;
-    if(!groups[key]) groups[key]=[];
-    groups[key].push(l);
+  legs.forEach(function(l){
+    // Normalize strike: integer if whole number, else 2 decimal places
+    var _sk=parseFloat(l.strike);
+    var _skStr=(_sk%1===0)?_sk.toFixed(0):_sk.toFixed(2);
+    var key=(l._isStock?'stock':l.type)+':'+_skStr+':'+l.exp;
+    if(!groups[key]) groups[key]={key:key,type:l._isStock?'stock':l.type,
+      strike:parseFloat(l.strike),exp:l.exp,_isStock:l._isStock||false,
+      legs:[],lot:l.lot||(l._isStock?1:100)};
+    groups[key].legs.push(l);
   });
+
+  var openPositions=[];
+  var closedPositions=[];
+
   Object.keys(groups).forEach(function(key){
-    var grp=groups[key];
-    var netQty=grp.reduce(function(s,l){return s+l.qty;},0);
-    if(netQty===0&&grp.length>=2){
-      // Find buy legs and sell legs, match them
-      var buys=grp.filter(function(l){return l.qty>0;});
-      var sells=grp.filter(function(l){return l.qty<0;});
-      buys.forEach(function(buy){
-        var sell=sells.find(function(s){return !s._matched;});
-        if(!sell) return;
-        sell._matched=true;
-        // Realized PnL for the matched pair
-        var avgBuy=buy.premium,avgSell=Math.abs(sell.premium);
-        var qty=Math.min(Math.abs(buy.qty),Math.abs(sell.qty));
-        var lot=buy.lot||100;
-        buy._closed=true;
-        buy._closePrima=avgSell;
-        buy._realizedPnl=(avgSell-avgBuy)*qty*lot;
-        buy.status='closed';
-        sell._closed=true;
-        sell._closePrima=avgBuy;
-        sell._realizedPnl=(avgBuy-Math.abs(avgSell))*Math.abs(sell.qty)*lot;
-        sell.status='closed';
+    var g=groups[key];
+    var lot=g.lot;
+
+    // Net qty — round to avoid float issues (10-5-5 = 0, not 1e-15)
+    var netQty=Math.round(g.legs.reduce(function(s,l){return s+l.qty;},0)*1e6)/1e6;
+
+    // Realized PnL = sum of cashflows (buy = pay = negative, sell = receive = positive)
+    // cashflow per leg = -premium_neta * qty * lot
+    var realizedPnl=g.legs.reduce(function(s,l){
+      return s + (-l.premium * l.qty * (g._isStock?1:lot));
+    },0);
+
+    if(Math.abs(netQty)<1e-4){
+      // CLOSED: net qty is effectively zero
+      closedPositions.push({
+        key:key, type:g.type, strike:g.strike, exp:g.exp,
+        _isStock:g._isStock, lot:lot,
+        realizedPnl:realizedPnl,
+        legs:g.legs
+      });
+    } else {
+      // OPEN: PPC = weighted avg of BUY legs only (if net long)
+      //        PPV = weighted avg of SELL legs only (if net short)
+      var buyLegs=g.legs.filter(function(l){return l.qty>0;});
+      var sellLegs=g.legs.filter(function(l){return l.qty<0;});
+      var totalBuyQty=buyLegs.reduce(function(s,l){return s+l.qty;},0);
+      var totalSellQty=sellLegs.reduce(function(s,l){return s+Math.abs(l.qty);},0);
+
+      // PPC neto (prima neta, lo que realmente pagaste/cobraste con comisiones)
+      var ppcNeto=netQty>0
+        ? (totalBuyQty>0 ? buyLegs.reduce(function(s,l){return s+l.premium*l.qty;},0)/totalBuyQty : 0)
+        : (totalSellQty>0 ? sellLegs.reduce(function(s,l){return s+l.premium*Math.abs(l.qty);},0)/totalSellQty : 0);
+
+      // PPC bruto (prima bruta antes de comisiones)
+      var ppcBruto=netQty>0
+        ? (totalBuyQty>0 ? buyLegs.reduce(function(s,l){return s+(l._primaRaw||l.premium)*l.qty;},0)/totalBuyQty : 0)
+        : (totalSellQty>0 ? sellLegs.reduce(function(s,l){return s+(l._primaRaw||l.premium)*Math.abs(l.qty);},0)/totalSellQty : 0);
+
+      // Label: PPC (long) or PPV (short)
+      var ppcLabel=netQty>0?'PPC':'PPV';
+
+      openPositions.push({
+        key:key, type:g.type, strike:g.strike, exp:g.exp,
+        _isStock:g._isStock, lot:lot,
+        netQty:netQty,
+        ppcNeto:ppcNeto,
+        ppcBruto:ppcBruto,
+        ppcLabel:ppcLabel,
+        totalBuyQty:totalBuyQty,
+        totalSellQty:totalSellQty,
+        legs:g.legs
       });
     }
   });
-  // Clean _matched flags
-  legs.forEach(function(l){delete l._matched;});
+
+  return{open:openPositions,closed:closedPositions};
 }
 
 function renderLegsPanel(){
-  autoDetectClosed(); // check if any positions net to zero
   var openEl=document.getElementById('legsOpen');
   var closedEl=document.getElementById('legsClosed');
   var closedHdr=document.getElementById('closedHeader');
   var cs=currSym();
   if(!openEl||!closedEl) return;
 
-  var openLegs=legs.filter(function(l){return !l._closed;});
-  var closedLegs=legs.filter(function(l){return l._closed;});
+  var net=buildNetPositions();
+  var openPos=net.open;
+  var closedPos=net.closed;
 
-  function legRow(leg, isClosed){
-    var r=calcLegPnLSim(leg);
-    var pnlStr=isNaN(r)?'—':'<span style="color:'+(r>=0?'var(--g2)':'var(--r2)')+';font-weight:700">'+(r>=0?'+':'')+cs+r.toFixed(2)+'</span>';
-    var sideClr=leg.qty>0?'var(--g2)':'var(--r2)';
-    var sideLabel=leg.qty>0?'L':'S';
-    return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:6px 8px;margin-bottom:5px;opacity:'+(isClosed?'.55':'1')+'">'
-      +'<div style="display:flex;align-items:center;justify-content:space-between;gap:4px">'
-        +'<span style="font-size:10px;font-family:var(--mono)">'
-          +'<span style="color:'+sideClr+';font-weight:700">'+sideLabel+'</span>'
-          +' '+Math.abs(leg.qty)+' '+(leg._isStock?'ACC':leg.type.toUpperCase())+' $'+leg.strike
-        +'</span>'
-        +(isClosed
-          ?'<span style="font-size:9px;font-family:var(--mono)">'+'<span style="color:var(--t3)">cerrada @ </span>'+'<span style="color:var(--t)">'+cs+(leg._closePrima||0).toFixed(2)+'</span>'+'<span style="margin-left:6px;font-weight:700;color:'+(leg._realizedPnl>=0?'var(--g2)':'var(--r2)')+'">'+(leg._realizedPnl>=0?'+':'')+cs+(leg._realizedPnl||0).toFixed(2)+' PnL</span>'+'</span>'
-          :'<div style="display:flex;gap:4px;align-items:center">'+'<input type="number" id="cp_'+leg.id+'" placeholder="px cierre" style="width:72px;background:var(--bg4);border:1px solid var(--bdr2);color:var(--t);padding:2px 5px;border-radius:4px;font-size:10px;font-family:var(--mono)">'+'<button onclick="closeLegInSimVal('+leg.id+')" style="background:none;border:1px solid var(--rbdr);color:var(--r2);font-size:9px;padding:1px 6px;border-radius:3px;cursor:pointer">Cerrar</button>'+'</div>'
-        )
-        +'<button onclick="removeLeg('+leg.id+')" style="background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;padding:0 2px">×</button>'
-      +'</div>'
-      +'<div style="display:flex;justify-content:space-between;margin-top:3px;font-size:10px;font-family:var(--mono);color:var(--t3)">'
-        +'<span>Prima neta: '+cs+leg.premium.toFixed(2)+(leg._primaRaw&&Math.abs(leg._primaRaw-leg.premium)>0.001?' <span style="opacity:.55;font-size:9px">(bruta: '+cs+parseFloat(leg._primaRaw).toFixed(2)+')</span>':'')+'</span>'
-        +'<span>P&amp;L: '+pnlStr+'</span>'
-      +'</div>'
-    +'</div>';
+  // ── ABIERTAS: una fila por posición neta ──
+  if(!openPos.length){
+    openEl.innerHTML='<div style="font-size:10px;color:var(--t3);text-align:center;padding:10px">Sin posiciones abiertas</div>';
+  } else {
+    openEl.innerHTML=openPos.map(function(pos,posIdx){
+      var sideClr=pos.netQty>0?'var(--g2)':'var(--r2)';
+      var sideLabel=pos.netQty>0?'LONG':'SHORT';
+      // P&L no realizado vs precio de mercado
+      var d=rawData.find(function(r){
+        return r.ticker===currentData.ticker&&r.type===pos.type
+          &&Math.abs(parseFloat(r.strike)-pos.strike)<0.01&&r.expiration===pos.exp;
+      });
+      var cp=d?parseFloat(d.lastPrice):NaN;
+      if(isNaN(cp)||cp<=0){var b=d?parseFloat(d.bid):NaN,a=d?parseFloat(d.ask):NaN;if(!isNaN(b)&&b>0&&!isNaN(a)&&a>0)cp=(b+a)/2;}
+      var unrealPnl=!isNaN(cp)&&cp>0?(cp-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot):NaN;
+      var pnlStr=isNaN(unrealPnl)
+        ?'<span style="color:var(--t3)">P&L: s/d</span>'
+        :'<span style="color:'+(unrealPnl>=0?'var(--g2)':'var(--r2)')+';font-weight:700">P&L: '+(unrealPnl>=0?'+':'')+cs+unrealPnl.toFixed(2)+'</span>';
+
+      var inputId='cp_'+posIdx;
+      return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:6px 8px;margin-bottom:5px">'
+        +'<div style="display:flex;align-items:center;justify-content:space-between;gap:4px;flex-wrap:wrap">'
+          +'<span style="font-size:11px;font-family:var(--mono);font-weight:700">'
+            +'<span style="color:'+sideClr+'">'+sideLabel+'</span>'
+            +' '+Math.abs(pos.netQty)+(pos._isStock?'':' c.')
+            +' '+(pos._isStock?'ACC':pos.type.toUpperCase())+' $'+pos.strike
+          +'</span>'
+          +'<div style="display:flex;gap:4px;align-items:center">'
+            +'<input type="number" id="'+inputId+'" placeholder="px cierre" '
+            +'style="width:72px;background:var(--bg4);border:1px solid var(--bdr2);color:var(--t);padding:2px 5px;border-radius:4px;font-size:10px;font-family:var(--mono)">'
+            +'<button onclick="closePosInSim('+posIdx+')" '
+            +'style="background:none;border:1px solid var(--rbdr);color:var(--r2);font-size:9px;padding:1px 6px;border-radius:3px;cursor:pointer">Cerrar</button>'
+            +'<button onclick="removePosByKey('+posIdx+')" '
+            +'style="background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;padding:0 2px">×</button>'
+          +'</div>'
+        +'</div>'
+        +'<div style="font-size:10px;font-family:var(--mono);color:var(--t3);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap">'
+          +'<span>'
+            +'<strong style="color:var(--vl)">'+(pos.ppcLabel||'PPC')+'</strong>'
+            +' neto: <strong style="color:var(--t)">'+cs+pos.ppcNeto.toFixed(2)+'</strong>'
+            +(Math.abs((pos.ppcBruto||0)-pos.ppcNeto)>0.001
+              ?' <span style="opacity:.55;font-size:9px">(bruto: '+cs+(pos.ppcBruto||0).toFixed(2)+')</span>'
+              :'')
+          +'</span>'
+          +'<span>'+pnlStr+'</span>'
+        +'</div>'
+      +'</div>';
+    }).join('');
   }
 
-  openEl.innerHTML=openLegs.length
-    ?openLegs.map(function(l){return legRow(l,false);}).join('')
-    :'<div style="font-size:10px;color:var(--t3);text-align:center;padding:10px">Sin patas</div>';
-
-  if(closedLegs.length){
+  // ── CERRADAS: solo PnL total ──
+  if(closedPos.length){
     closedHdr.style.display='';
-    closedEl.innerHTML=closedLegs.map(function(l){return legRow(l,true);}).join('');
+    var totalPnl=closedPos.reduce(function(s,p){return s+p.realizedPnl;},0);
+    var pnlClr=totalPnl>=0?'var(--g2)':'var(--r2)';
+    closedEl.innerHTML='<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:11px">'
+      +'<div style="color:var(--t3);font-size:9px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">PnL realizado (posiciones cerradas)</div>'
+      +'<div style="font-size:15px;font-weight:800;color:'+pnlClr+'">'+(totalPnl>=0?'+':'')+cs+totalPnl.toFixed(2)+'</div>'
+      +'<div style="font-size:9px;color:var(--t3);margin-top:3px">'+closedPos.length+' posici'+(closedPos.length===1?'ón':'ones')+' cerrada'+(closedPos.length===1?'':'s')+'</div>'
+    +'</div>';
   } else {
     closedHdr.style.display='none';
     closedEl.innerHTML='';
   }
 
-  // Total cost (open legs only)
-  var total=openLegs.reduce(function(s,l){var c=(l.premium||0)*Math.abs(l.qty)*(l.lot||100);return s+(l.qty>=0?-c:c);},0);
+  // Costo neto de posiciones abiertas
+  var totalOpen=openPos.reduce(function(s,pos){
+    return s+(-pos.ppcNeto*pos.netQty*(pos._isStock?1:pos.lot));
+  },0);
   var tc=document.getElementById('totalCost');
-  if(tc){tc.textContent=(total>=0?'+':'')+cs+total.toFixed(2);tc.style.color=total>=0?'var(--g2)':'var(--r2)';}
+  if(tc){tc.textContent=(totalOpen>=0?'+':'')+cs+totalOpen.toFixed(2);tc.style.color=totalOpen>=0?'var(--g2)':'var(--r2)';}
 
-  // Show/hide update portfolio button
   var btnUpd=document.getElementById("btnUpdateStrat");
   if(btnUpd) btnUpd.style.display=_activeStratId?"":"none";
-  // Keep legacy legsBody in sync
   redrawLegs();
-  // Auto-render payoff whenever legs change
   try{renderStrategy();}catch(e){console.warn('renderStrategy:',e);}
+}
+
+// Remove all legs belonging to a net position key
+function removePosByKey(posIdx){
+  var net=buildNetPositions();
+  var pos=net.open[posIdx];
+  if(!pos) return;
+  var posKey=pos.key;
+  legs=legs.filter(function(l){
+    var _sk2=parseFloat(l.strike);
+    var _skStr2=(_sk2%1===0)?_sk2.toFixed(0):_sk2.toFixed(2);
+    var k=(l._isStock?'stock':l.type)+':'+_skStr2+':'+l.exp;
+    return k!==posKey;
+  });
+  renderLegsPanel();
+}
+
+// Close a NET position at a given price
+function closePosInSim(posIdx){
+  var net=buildNetPositions();
+  var pos=net.open[posIdx];
+  if(!pos) return;
+  var inputId='cp_'+posKey.replace(/[:.]/g,'_');
+  var inp=document.getElementById(inputId);
+  var closePx=inp?parseFloat(inp.value):NaN;
+  if(isNaN(closePx)||closePx<=0){alert('Ingres\u00e1 un precio de cierre v\u00e1lido.');return;}
+  // Add a closing leg: opposite qty, at closePx
+  var lot=pos.lot||100;
+  var isARS=currentData.currency==='ARS';
+  var comPct=parseFloat((document.getElementById(isARS?'qoComAR':'qoComUS')||{}).value)||0;
+  var impPct=parseFloat((document.getElementById(isARS?'qoImpAR':'qoImpUS')||{}).value)||0;
+  var comTotal=comPct/100*(1+impPct/100);
+  // Closing qty is opposite of net
+  var closeQty=-pos.netQty;
+  // If selling (closeQty<0), net prima decreases by commission
+  var closePxNet=closeQty>0?closePx*(1+comTotal):closePx*(1-comTotal);
+  legCnt++;
+  legs.push({
+    id:legCnt,type:pos.type,strike:pos.strike,exp:pos.exp,
+    qty:closeQty,premium:parseFloat(closePxNet.toFixed(4)),
+    lot:pos._isStock?1:lot,_isStock:pos._isStock,
+    _primaRaw:closePx,_comTotal:comTotal
+  });
+  renderLegsPanel();
 }
 
 function calcLegPnLSim(leg){
@@ -3349,37 +3540,137 @@ function exportLegsCSV(){
   a.href=URL.createObjectURL(blob);a.download='estrategia.csv';a.click();
 }
 function importLegsCSV(){
-  var inp=document.createElement('input');inp.type='file';inp.accept='.csv';
+  var inp=document.createElement('input');inp.type='file';inp.accept='.csv,.txt';
   inp.onchange=function(){
     var file=inp.files[0];if(!file) return;
     var reader=new FileReader();
     reader.onload=function(e){
-      var lines=e.target.result.trim().split('\n');
-      var start=lines[0].toLowerCase().includes('underlying')?1:0;
-      clearLegs();
-      lines.slice(start).forEach(function(line){
-        var p=line.split(';');
-        if(p.length<4) return;
-        var type=(p[1]||'call').trim().toLowerCase();
-        var qty=parseFloat(p[2])||1;
-        var strike=parseFloat(p[3])||0;
-        // CSV may have prima_bruta;prima_neta or just prima
-        var primaRaw=parseFloat(p[4])||0;
-        var primaNeta=parseFloat(p[5])||primaRaw; // if no neta column, use raw
-        var exp=(p[6]||p[5]||'').trim()||(getExps()[0]||'');
-        // Apply commissions to primaRaw
-        var _isARS3=currentData.currency==='ARS';
-        var _com3=parseFloat((document.getElementById(_isARS3?'qoComAR':'qoComUS')||{}).value)||0;
-        var _imp3=parseFloat((document.getElementById(_isARS3?'qoImpAR':'qoImpUS')||{}).value)||0;
-        var _comT3=_com3/100*(1+_imp3/100);
-        var primaConCom=qty>0?primaRaw*(1+_comT3):primaRaw*(1-_comT3);
-        legCnt++;
-        legs.push({id:legCnt,type:type,strike:strike,exp:exp,qty:qty,
-          premium:parseFloat(primaConCom.toFixed(4)),
-          _primaRaw:primaRaw,_comTotal:_comT3,
-          lot:type==='stock'?1:100,_isStock:type==='stock'});
+      var raw=e.target.result.trim();
+
+      // ── Detect separator (handle spaces around ;)
+      var firstLine=raw.split('\n')[0];
+      var cntSemi=firstLine.split(';').length-1;
+      var cntComma=firstLine.split(',').length-1;
+      var sep=cntSemi>0?';':',';
+
+      // ── Parse rows: split by sep, trim each cell, remove quotes
+      var rows=raw.split('\n').map(function(l){
+        return l.split(sep).map(function(c){return c.trim().replace(/^"|"$/g,'');});
+      }).filter(function(r){return r.some(function(c){return c!=='';});});
+
+      if(!rows.length){alert('Archivo vac\u00edo.');return;}
+
+      // ── Detect header: first row has non-numeric values
+      var hdr=rows[0].map(function(h){return h.toLowerCase().trim();});
+      var hasHeader=hdr.some(function(h){
+        return h.length>0&&isNaN(parseARNum(h))&&!['call','put','c','p','stock'].includes(h);
       });
-      renderLegsPanel();renderStrategy();
+      var start=hasHeader?1:0;
+
+      // ── Map column indices from header
+      // Special case: prefer 'prima_bruta' over 'prima_neta'
+      var idxUnderlying=-1,idxType=-1,idxQty=-1,idxStrike=-1;
+      var idxPrimaBruta=-1,idxPrimaNeta=-1,idxExp=-1;
+
+      if(hasHeader){
+        hdr.forEach(function(h,i){
+          if(h.includes('ticker')||h.includes('under')||h.includes('activo')) idxUnderlying=i;
+          else if(h.includes('tipo')||h==='type') idxType=i;
+          else if(h==='qty'||h.includes('cantidad')||h.includes('lote')) idxQty=i;
+          else if(h.includes('strike')||h.includes('ejercicio')) idxStrike=i;
+          else if(h.includes('prima_bruta')||h.includes('bruta')) idxPrimaBruta=i;
+          else if(h.includes('prima_neta')||h.includes('neta')) idxPrimaNeta=i;
+          else if(h.includes('prima')||h.includes('precio')||h.includes('prem')) {
+            if(idxPrimaBruta<0) idxPrimaBruta=i; // first 'prima' = bruta
+          }
+          else if(h.includes('vto')||h.includes('exp')||h.includes('venc')) idxExp=i;
+        });
+      }
+
+      // ── Fallback positions for your format: underlying;tipo;cantidad;strike;prima_bruta;prima_neta;vencimiento
+      var hasUnderlying=idxUnderlying>=0||( hasHeader&&hdr[0].includes('under'));
+      if(!hasUnderlying&&idxUnderlying<0){
+        // Try to detect: if first col looks like a ticker (letters)
+        var firstDataRow=rows[start]||[];
+        if(firstDataRow[0]&&isNaN(parseARNum(firstDataRow[0]))&&
+           !['call','put','c','p','stock'].includes(firstDataRow[0].toLowerCase())){
+          hasUnderlying=true;idxUnderlying=0;
+        }
+      }
+      var base=hasUnderlying?1:0;
+      if(idxType<0)       idxType=base+0;
+      if(idxQty<0)        idxQty=base+1;
+      if(idxStrike<0)     idxStrike=base+2;
+      if(idxPrimaBruta<0) idxPrimaBruta=base+3;
+      // prima_neta column: skip it (we calculate it from bruta + commissions)
+      if(idxExp<0)        idxExp=base+5; // underlying;tipo;qty;strike;bruta;neta;vto
+
+      // ── Commission rates from QO bar
+      var isARS=currentData.currency==='ARS';
+      var comPct=parseFloat((document.getElementById(isARS?'qoComAR':'qoComUS')||{}).value)||0;
+      var impPct=parseFloat((document.getElementById(isARS?'qoImpAR':'qoImpUS')||{}).value)||0;
+      var comTotal=comPct/100*(1+impPct/100);
+
+      var count=0;
+      clearLegs();
+      rows.slice(start).forEach(function(p){
+        if(!p||p.every(function(c){return c==='';})){ return; }
+
+        var type=(p[idxType]||'').trim().toLowerCase();
+        if(!type) return;
+        if(type==='c') type='call';
+        else if(type==='p') type='put';
+        else if(['acc','accion','acción','share','stock'].includes(type)) type='stock';
+        if(type!=='call'&&type!=='put'&&type!=='stock') return;
+
+        // ── parseARNum handles "6902,9" → 6902.9 and "6500" → 6500
+        var qty=parseARNum(p[idxQty]);
+        var strike=parseARNum(p[idxStrike]);
+        var primaRaw=parseARNum(p[idxPrimaBruta])||0;
+
+        if(isNaN(qty)||qty===0||isNaN(strike)||strike<=0) return;
+
+        // ── Apply commissions to get prima neta
+        // Buy (qty>0): pay more = prima_bruta × (1 + com_total)
+        // Sell (qty<0): receive less = prima_bruta × (1 - com_total)
+        var primaNeta=qty>0?primaRaw*(1+comTotal):primaRaw*(1-comTotal);
+
+        // ── Expiration: try column, then match to chain, then first available
+        var exp='';
+        if(idxExp>=0&&p[idxExp]) exp=p[idxExp].trim();
+        if(!exp){
+          // Try to match to available exps
+          var avail=getExps();
+          exp=avail[0]||'';
+        }
+
+        // ── Strike normalization (same as buildNetPositions key)
+        var strikeNorm=strike; // parseARNum already gives correct float
+
+        legCnt++;
+        legs.push({
+          id:legCnt,
+          type:type,
+          strike:strikeNorm,
+          exp:exp,
+          qty:qty,
+          premium:primaNeta, // full precision, no rounding
+          _primaRaw:primaRaw,
+          _comTotal:comTotal,
+          lot:type==='stock'?1:100,
+          _isStock:type==='stock'
+        });
+        count++;
+      });
+
+      if(!count){
+        alert('No se pudieron leer operaciones.\n\nFormato esperado:\nunderlying;tipo;cantidad;strike;prima_bruta;prima_neta;vencimiento\n\nNota: strikes con coma decimal (ej: 6902,9) son soportados.');
+        return;
+      }
+      renderLegsPanel();
+      // Feedback
+      var fb=document.getElementById('qoFeedback');
+      if(fb){fb.textContent=count+' operaciones importadas';setTimeout(function(){fb.textContent='';},4000);}
     };
     reader.readAsText(file);
   };
@@ -3391,30 +3682,33 @@ function importLegsCSV(){
 loadPortfolioFromStorage();
 loadData();
 </script>
-<!-- GLOBAL ORDER BAR -->
-<div id="globalQOBar" style="position:fixed;bottom:0;left:0;right:0;z-index:500;background:var(--bg2);border-top:1px solid var(--bdr2);padding:8px 16px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;box-shadow:0 -4px 20px rgba(0,0,0,.3)">
-  <span style="font-size:10px;font-weight:700;color:var(--vl);text-transform:uppercase;letter-spacing:.06em;min-width:50px">Orden</span>
-  <select id="qoType" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:5px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onchange="populateQOStrikes()">
+
+<!-- GLOBAL ORDER BAR - fixed footer -->
+<div id="globalQOBar" style="position:fixed;bottom:0;left:0;right:0;z-index:500;background:var(--bg2);border-top:2px solid var(--bdr2);padding:7px 16px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;box-shadow:0 -4px 20px rgba(0,0,0,.35)">
+  <span style="font-size:10px;font-weight:700;color:var(--vl);text-transform:uppercase;letter-spacing:.06em;white-space:nowrap">Cargar orden</span>
+  <select id="qoType" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onchange="populateQOStrikes()">
     <option value="call">Call</option>
     <option value="put">Put</option>
     <option value="stock">Acciones</option>
   </select>
-  <select id="qoStrike" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:5px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none;min-width:100px" onchange="qoAutoFillPrima()" onkeydown="if(event.key==='Enter')quickOrderFill()"><option value="">Strike...</option></select>
-  <select id="qoExp" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:5px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none;min-width:110px" onchange="populateQOStrikes()"></select>
-  <input type="number" id="qoPrima" placeholder="Prima (last)" style="width:100px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:5px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()">
-  <input type="number" id="qoQty" placeholder="Lotes (+/-)" value="1" style="width:76px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:5px 8px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()">
-  <button class="btn btn-sm" onclick="quickOrderFill()" style="font-weight:800;min-width:70px">Cargar</button>
-  <span style="font-size:10px;color:var(--t3);font-weight:700;margin-left:8px;white-space:nowrap">Com. ARG %</span>
-  <input type="number" id="qoComAR" value="0.6" step="0.1" min="0" max="10" style="width:58px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none" title="Comision broker AR (% sobre prima)">
+  <select id="qoExp" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none;min-width:108px" onchange="populateQOStrikes()"></select>
+  <select id="qoStrike" style="background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none;min-width:100px" onchange="qoAutoFillPrima()">
+    <option value="">Strike...</option>
+  </select>
+  <input type="number" id="qoPrima" placeholder="Prima bruta" style="width:96px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()">
+  <input type="number" id="qoQty" placeholder="Lotes (+/-)" value="1" style="width:74px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 7px;border-radius:6px;font-size:12px;font-family:var(--mono);outline:none" onkeydown="if(event.key==='Enter')quickOrderFill()">
+  <span style="font-size:10px;color:var(--t3);white-space:nowrap">Com.AR%</span>
+  <input type="number" id="qoComAR" value="0.5" step="0.1" min="0" max="10" style="width:52px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none">
   <span style="font-size:9px;color:var(--t3)">+imp</span>
-  <input type="number" id="qoImpAR" value="21" step="1" min="0" max="100" style="width:50px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none" title="Impuestos sobre comision AR (%)">
-  <span style="font-size:10px;color:var(--t3);font-weight:700;margin-left:6px;white-space:nowrap">Com. USA %</span>
-  <input type="number" id="qoComUS" value="0.5" step="0.1" min="0" max="10" style="width:58px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none" title="Comision broker USA (% sobre prima)">
+  <input type="number" id="qoImpAR" value="21" step="1" min="0" max="100" style="width:46px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none">
+  <span style="font-size:10px;color:var(--t3);margin-left:4px;white-space:nowrap">Com.US%</span>
+  <input type="number" id="qoComUS" value="0.5" step="0.1" min="0" max="10" style="width:52px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none">
   <span style="font-size:9px;color:var(--t3)">+imp</span>
-  <input type="number" id="qoImpUS" value="0" step="1" min="0" max="100" style="width:50px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none" title="Impuestos sobre comision USA (%)">
-  <span id="qoFeedback" style="font-size:10px;color:var(--g2);font-family:var(--mono);min-width:100px;margin-left:4px"></span>
-  <span style="font-size:10px;color:var(--t3);margin-left:auto;white-space:nowrap">Neg = venta &middot; Prima vacia = last</span>
+  <input type="number" id="qoImpUS" value="0" step="1" min="0" max="100" style="width:46px;background:var(--bg3);border:1px solid var(--bdr2);color:var(--t);padding:4px 6px;border-radius:6px;font-size:11px;font-family:var(--mono);outline:none">
+  <button class="btn btn-sm" onclick="quickOrderFill()" style="font-weight:800;min-width:68px">Cargar</button>
+  <span id="qoFeedback" style="font-size:10px;color:var(--g2);font-family:var(--mono);min-width:100px"></span>
+  <span style="font-size:10px;color:var(--t3);margin-left:auto;white-space:nowrap">Neg=venta &middot; Prima vacia=last</span>
 </div>
-<div style="height:52px"></div>
+<div style="height:56px"></div>
 </body>
 </html>
