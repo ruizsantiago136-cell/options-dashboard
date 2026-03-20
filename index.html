@@ -561,6 +561,7 @@ input.qty-pos{color:var(--g2)!important;border-color:rgba(16,185,129,.35)!import
           <div style="padding:14px;height:280px;position:relative"><canvas id="chartPayoff"></canvas></div>
         </div>
         <div class="metrics-grid" id="stratMetrics" style="margin-bottom:8px"></div>
+        <div id="stratGreeksBar" style="display:none;margin-bottom:8px"></div>
         <div id="stratGarantias" style="display:none;background:rgba(251,191,36,.08);border:1px solid rgba(251,191,36,.3);border-radius:8px;padding:7px 14px;margin-bottom:8px;font-size:11px;font-family:var(--mono)"><span style="color:var(--gold2);font-weight:700">Garantias requeridas: </span><span class="g-val" style="font-weight:800;color:var(--t)"></span><span style="color:var(--t3);font-size:9px;margin-left:8px">last x lotes x 100 x 1,45</span></div>
         <!-- Tabla + slider de rango en columnas -->
         <div style="display:flex;gap:8px;align-items:flex-start">
@@ -1916,6 +1917,93 @@ function renderStrategy(){
     return '<div class="mc"><div class="mc-lbl">'+m.lbl+'</div><div class="mc-val" style="color:'+m.c+'">'+m.val+'</div></div>';
   }).join('');
 
+  // ── Griegas netas de la estrategia actual ──
+  (function(){
+    var el=document.getElementById('stratGreeksBar');
+    if(!el) return;
+    var spot2=currentData.spot||0;
+    var r2=currentData.r||getRF();
+    var _callSlider2=document.getElementById('scIVCall');
+    var _putSlider2=document.getElementById('scIVPut');
+    var _daysSlider2=document.getElementById('scDays');
+    var ivcG=parseFloat(_callSlider2?_callSlider2.value:25)/100;
+    var ivpG=parseFloat(_putSlider2?_putSlider2.value:25)/100;
+    var daysG=parseInt(_daysSlider2?_daysSlider2.value:0)||0;
+    var T2=daysG>0?daysG/365:(currentData.T||0);
+    if(!spot2||!T2){el.style.display='none';return;}
+    var totD=0,totG=0,totV=0,totTh=0,valid=0;
+    var legRows=[];
+    var _netPos2=buildNetPositions();
+    _netPos2.open.forEach(function(pos){
+      if(pos._isStock){totD+=pos.netQty;return;}
+      var ivG=pos.type==='call'?ivcG:ivpG;
+      // Try market IV first
+      var dRow=rawData.find(function(r){
+        return r.ticker===currentData.ticker&&r.type===pos.type
+          &&Math.abs(parseFloat(r.strike)-pos.strike)<0.05&&r.expiration===pos.exp;
+      });
+      if(dRow&&!isNaN(parseFloat(dRow.impliedVolatility))&&parseFloat(dRow.impliedVolatility)>0.001)
+        ivG=parseFloat(dRow.impliedVolatility);
+      var bs=bsCalc(pos.type,spot2,pos.strike,T2,r2,ivG);
+      if(isNaN(bs.delta)) return;
+      var q=pos.netQty;
+      totD+=bs.delta*q; totG+=bs.gamma*q; totV+=bs.vega*q; totTh+=bs.theta*q;
+      valid++;
+      legRows.push({
+        side:q>0?'LONG':'SHORT', type:pos.type.toUpperCase(),
+        strike:pos.strike, qty:Math.abs(q),
+        delta:bs.delta*q, gamma:bs.gamma*q, vega:bs.vega*q, theta:bs.theta*q,
+        iv:(ivG*100).toFixed(1)
+      });
+    });
+    if(!valid&&!_netPos2.open.some(function(p){return p._isStock;})){
+      el.style.display='none'; return;
+    }
+    el.style.display='';
+    // Summary bar
+    var fmtG=function(v,dec){return (v>=0?'+':'')+v.toFixed(dec);};
+    var summaryHtml='<div style="background:var(--bg2);border:1px solid var(--bdr);border-radius:8px;overflow:hidden">'
+      +'<div style="display:flex;align-items:center;flex-wrap:wrap;gap:0">'
+        +'<div style="padding:8px 14px;border-right:1px solid var(--bdr);flex-shrink:0">'
+          +'<div style="font-size:9px;color:var(--t3);font-weight:700;text-transform:uppercase;letter-spacing:.05em;margin-bottom:1px">Griegas netas</div>'
+          +'<div style="font-size:9px;color:var(--t3)">al spot actual</div>'
+        +'</div>'
+        +'<div style="display:flex;gap:24px;flex-wrap:wrap;padding:8px 16px;align-items:center;font-family:var(--mono);font-size:13px;font-weight:700">'
+          +'<span title="Delta"><span style="color:var(--t3);font-size:10px;font-weight:400">Δ </span><span style="color:#93c5fd">'+fmtG(totD,4)+'</span></span>'
+          +'<span title="Gamma"><span style="color:var(--t3);font-size:10px;font-weight:400">Γ </span><span style="color:#c4b5fd">'+fmtG(totG,5)+'</span></span>'
+          +'<span title="Vega"><span style="color:var(--t3);font-size:10px;font-weight:400">ν </span><span style="color:#6ee7b7">'+fmtG(totV,4)+'</span></span>'
+          +'<span title="Theta/día"><span style="color:var(--t3);font-size:10px;font-weight:400">Θ/d </span><span style="color:#fdba74">'+fmtG(totTh,5)+'</span></span>'
+        +'</div>'
+      +'</div>';
+    // Per-leg breakdown (solo si hay más de 1 pata)
+    if(legRows.length>1){
+      summaryHtml+='<div style="border-top:1px solid var(--bdr);overflow-x:auto">'
+        +'<table style="width:100%;border-collapse:collapse;min-width:380px">'
+          +'<thead><tr style="border-bottom:1px solid var(--bdr)">'
+            +'<th style="padding:4px 10px;font-size:9px;color:var(--t3);text-align:left;font-family:var(--sans);text-transform:uppercase;letter-spacing:.05em">Pata</th>'
+            +'<th style="padding:4px 10px;font-size:9px;color:#93c5fd;text-align:right;font-family:var(--sans)">Δ</th>'
+            +'<th style="padding:4px 10px;font-size:9px;color:#c4b5fd;text-align:right;font-family:var(--sans)">Γ</th>'
+            +'<th style="padding:4px 10px;font-size:9px;color:#6ee7b7;text-align:right;font-family:var(--sans)">ν</th>'
+            +'<th style="padding:4px 10px;font-size:9px;color:#fdba74;text-align:right;font-family:var(--sans)">Θ</th>'
+            +'<th style="padding:4px 10px;font-size:9px;color:var(--t3);text-align:right;font-family:var(--sans)">IV</th>'
+          +'</tr></thead><tbody>'
+        +legRows.map(function(l){
+          var sc=l.side==='LONG'?'var(--g2)':'var(--r2)';
+          return '<tr style="border-bottom:1px solid rgba(255,255,255,.025)">'
+            +'<td style="padding:3px 10px;font-size:10px"><span style="color:'+sc+';font-weight:700">'+l.side+'</span> '+l.qty+'× '+l.type+' @'+l.strike+'</td>'
+            +'<td style="padding:3px 10px;font-family:var(--mono);font-size:10px;text-align:right;color:#93c5fd">'+fmtG(l.delta,4)+'</td>'
+            +'<td style="padding:3px 10px;font-family:var(--mono);font-size:10px;text-align:right;color:#c4b5fd">'+fmtG(l.gamma,5)+'</td>'
+            +'<td style="padding:3px 10px;font-family:var(--mono);font-size:10px;text-align:right;color:#6ee7b7">'+fmtG(l.vega,4)+'</td>'
+            +'<td style="padding:3px 10px;font-family:var(--mono);font-size:10px;text-align:right;color:#fdba74">'+fmtG(l.theta,5)+'</td>'
+            +'<td style="padding:3px 10px;font-family:var(--mono);font-size:10px;text-align:right;color:var(--t3)">'+l.iv+'%</td>'
+          +'</tr>';
+        }).join('')
+        +'</tbody></table></div>';
+    }
+    summaryHtml+='</div>';
+    el.innerHTML=summaryHtml;
+  })();
+
   // ── Garantías requeridas (solo patas short de opciones) ──
   var _garantias=0;
   var _net2=buildNetPositions();
@@ -2477,7 +2565,7 @@ function renderPortfolio(){
   });
   renderPortGreeks();
   cards.innerHTML=portfolio.map(function(strat){
-    // ── Net positions for this strategy (same logic as simulator) ──
+    // ── Net positions for this strategy (con ciclos: mismo fix que buildNetPositions) ──
     var _sLegs=strat.legs;
     var _groups={};
     _sLegs.forEach(function(l){
@@ -2492,13 +2580,29 @@ function renderPortfolio(){
     Object.keys(_groups).forEach(function(k){
       var g=_groups[k];
       var lot=g.lot;
-      var netQty=Math.round(g.legs.reduce(function(s,l){return s+(l.qty||0);},0)*1e6)/1e6;
-      var cf=g.legs.reduce(function(s,l){return s+(-l.openPrice*l.qty*(g._isStock?1:lot));},0);
-      if(Math.abs(netQty)<1e-4){
-        _closedPnl+=cf;
-      } else {
-        var buyLegs=g.legs.filter(function(l){return l.qty>0;});
-        var sellLegs=g.legs.filter(function(l){return l.qty<0;});
+      // ── Separar en ciclos: cada vez que el neto llega a 0 se cierra un ciclo ──
+      var _cycles=[],_curCycle=[],_runQty=0;
+      g.legs.forEach(function(l){
+        _curCycle.push(l);
+        _runQty=Math.round((_runQty+(l.qty||0))*1e6)/1e6;
+        if(Math.abs(_runQty)<1e-4){_cycles.push({legs:_curCycle.slice(),netQty:0});_curCycle=[];_runQty=0;}
+      });
+      if(_curCycle.length) _cycles.push({legs:_curCycle.slice(),netQty:_runQty});
+      // PnL realizado = cashflows de ciclos cerrados (usa openPrice que es el campo en portfolio)
+      var _realPnl=0;
+      _cycles.forEach(function(cyc){
+        if(Math.abs(cyc.netQty)<1e-4)
+          _realPnl+=cyc.legs.reduce(function(s,l){return s+(-l.openPrice*(l.qty||0)*(g._isStock?1:lot));},0);
+      });
+      _closedPnl+=_realPnl;
+      // Ciclo activo
+      var _lastCyc=_cycles[_cycles.length-1];
+      var netQty=_lastCyc?Math.round(_lastCyc.netQty*1e6)/1e6:0;
+      var _activeLegs=(_lastCyc&&Math.abs(netQty)>=1e-4)?_lastCyc.legs:[];
+      if(Math.abs(netQty)>=1e-4){
+        // PPP solo sobre patas del ciclo activo
+        var buyLegs=_activeLegs.filter(function(l){return l.qty>0;});
+        var sellLegs=_activeLegs.filter(function(l){return l.qty<0;});
         var tBQ=buyLegs.reduce(function(s,l){return s+l.qty;},0);
         var tSQ=sellLegs.reduce(function(s,l){return s+Math.abs(l.qty);},0);
         var ppcNeto=netQty>0
@@ -2882,14 +2986,18 @@ function renderCashCarry(){
   var isBig=spot>500;
 
   if(!spot||!strikes.length||!exp){
-    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Selección ticker y vencimiento primero.</div>';
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Selecci\u00f3n ticker y vencimiento primero.</div>';
     return;
   }
 
   var cm={};calls.forEach(function(d){cm[d._sk]=d;});
   var pm={};puts.forEach(function(d){pm[d._sk]=d;});
+  var atmK=currentData.calls.length?currentData.calls.reduce(function(best,d){
+    return Math.abs(d._sk-spot)<Math.abs(best._sk-spot)?d:best;
+  }).strike:null;
+  atmK=parseFloat(atmK)||null;
 
-  // Prioridad: last negociado -> mid bid/ask
+  // Last negociado -> mid bid/ask
   function getLast(d){
     if(!d) return null;
     var lp=parseFloat(d.lastPrice);
@@ -2899,51 +3007,116 @@ function renderCashCarry(){
     return null;
   }
 
+  // Build rows for ALL strikes
   var rows=[];
   strikes.forEach(function(K){
     var c=cm[K],p=pm[K];
-    if(!c||!p) return;
     var callP=getLast(c),putP=getLast(p);
-    if(callP===null||putP===null) return;
-    // Costo sintetico = Spot - Call(venta) + Put(compra)
-    var costo=spot-callP+putP;
-    if(costo<=0) return;
-    // Rendimiento = K/Costo - 1
-    var rend=(K/costo)-1;
-    // TNA = rend x 365/DTE
-    var tna=rend*(365/dte);
-    if(tna<=rf) return;
-    rows.push({K:K,costo:costo,rend:rend,tna:tna,callP:callP,putP:putP});
+    // Precio sintetica = Call - Put (diferencia)
+    var sintP=(callP!==null&&putP!==null)?callP-putP:null;
+    // Cash & Carry: costo = spot - callP + putP, TNA = (K/costo-1)*365/dte
+    var tna=null,costo=null;
+    if(callP!==null&&putP!==null){
+      costo=spot-callP+putP;
+      if(costo>0){
+        var rend=(K/costo)-1;
+        tna=rend*(365/dte);
+      }
+    }
+    // Zona: ITM/ATM/OTM
+    var zona;
+    if(K===atmK) zona='ATM';
+    else if(K<atmK) zona='ITM call / OTM put';
+    else zona='OTM call / ITM put';
+    rows.push({K:K,callP:callP,putP:putP,sintP:sintP,tna:tna,costo:costo,zona:zona});
   });
 
   if(!rows.length){
-    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3);font-size:11px">Ningún strike supera la TLR ('+(rf*100).toFixed(2)+'%). Mercado bien arbitrado.</div>';
+    el.innerHTML='<div style="text-align:center;padding:20px;color:var(--t3)">Sin datos suficientes.</div>';
     return;
   }
 
-  rows.sort(function(a,b){return b.tna-a.tna;});
-  var best=rows[0].tna;
+  // Sort: ITM (K < spot) desc, ATM, OTM (K > spot) asc
+  rows.sort(function(a,b){return a.K-b.K;});
 
-  var rowsHtml=rows.map(function(row,i){
-    var cls=i===0?'cc-best':'';
-    return '<tr class="'+cls+'" onclick="loadCashCarry('+row.K+','+row.callP+','+row.putP+')" style="cursor:pointer" title="Cargar estrategia sintética">'
-      +'<td style="font-weight:700;color:var(--vb)">'+cs+(isBig?row.K.toFixed(0):row.K.toFixed(2))+'</td>'
-      +'<td>'+cs+(isBig?row.costo.toFixed(0):row.costo.toFixed(2))+'</td>'
-      +'<td>'+cs+(isBig?row.callP.toFixed(0):row.callP.toFixed(2))+'</td>'
-      +'<td>'+cs+(isBig?row.putP.toFixed(0):row.putP.toFixed(2))+'</td>'
-      +'<td>'+(row.rend*100).toFixed(2)+'%</td>'
-      +'<td style="color:'+(row.tna>=best*0.95?'var(--gold2)':'var(--g2)')+';font-weight:700">'+(row.tna*100).toFixed(2)+'%</td>'
-      +'</tr>';
+  // Find min/max sintP for conditional formatting
+  var sintVals=rows.map(function(r){return r.sintP;}).filter(function(v){return v!==null;});
+  var maxSint=sintVals.length?Math.max.apply(null,sintVals):null;
+  var minSint=sintVals.length?Math.min.apply(null,sintVals):null;
+
+  var rowsHtml=rows.map(function(row){
+    var isATM=row.K===atmK;
+    var rowStyle=isATM?'background:rgba(124,58,237,.12);font-weight:700':'';
+
+    // Strike cell: bold + zona badge
+    var zonaClr=isATM?'var(--vb)':row.K<spot?'var(--g2)':'var(--t3)';
+    var strikeTd='<td style="font-weight:700;color:'+zonaClr+'">'+
+      cs+(isBig?row.K.toFixed(0):row.K.toFixed(2))+
+      '<span style="font-size:8px;margin-left:4px;opacity:.6">'+
+      (isATM?'ATM':row.K<spot?'ITM':'OTM')+'</span></td>';
+
+    // Sintetica price: conditional color (max=red cost, min=green cheapest)
+    var sintTd;
+    if(row.sintP!==null){
+      var isMostExp=maxSint!==null&&Math.abs(row.sintP-maxSint)<0.01;
+      var isCheapest=minSint!==null&&Math.abs(row.sintP-minSint)<0.01;
+      var sintClr=isMostExp?'var(--r2)':isCheapest?'var(--g2)':'var(--t)';
+      var sintBg=isMostExp?'rgba(248,113,113,.1)':isCheapest?'rgba(52,211,153,.1)':'';
+      sintTd='<td style="color:'+sintClr+';font-weight:'+(isMostExp||isCheapest?'700':'400')+
+        ';background:'+sintBg+'">'+
+        (row.sintP>=0?'+':'')+cs+(isBig?row.sintP.toFixed(0):row.sintP.toFixed(2))+'</td>';
+    } else {
+      sintTd='<td style="color:var(--t3)">-</td>';
+    }
+
+    // Call / Put prices
+    var callTd=row.callP!==null?'<td>'+cs+(isBig?row.callP.toFixed(0):row.callP.toFixed(2))+'</td>':'<td style="color:var(--t3)">-</td>';
+    var putTd =row.putP!==null?'<td>'+cs+(isBig?row.putP.toFixed(0):row.putP.toFixed(2))+'</td>':'<td style="color:var(--t3)">-</td>';
+
+    // TNA: highlight > rf
+    var tnaTd;
+    if(row.tna!==null){
+      var aboveTLR=row.tna>rf;
+      tnaTd='<td style="color:'+(aboveTLR?'var(--gold2)':'var(--t3)')+
+        ';font-weight:'+(aboveTLR?'700':'400')+'">'+(row.tna*100).toFixed(2)+'%</td>';
+    } else {
+      tnaTd='<td style="color:var(--t3)">-</td>';
+    }
+
+    // Rdto C&C
+    var rdtoTd;
+    if(row.tna!==null&&row.costo>0){
+      var rend2=(row.K/row.costo)-1;
+      var aboveTLR2=row.tna>rf;
+      rdtoTd='<td style="color:'+(aboveTLR2?'var(--g2)':'var(--t3)')+'">'
+        +(rend2>=0?'+':'')+( rend2*100).toFixed(2)+'%</td>';
+    } else {
+      rdtoTd='<td style="color:var(--t3)">-</td>';
+    }
+
+    // Click loads cash&carry strategy
+    var clickFn=row.callP&&row.putP?'onclick="loadCashCarry('+row.K+','+(row.callP||0)+','+(row.putP||0)+')" style="cursor:pointer;'+rowStyle+'"':'style="'+rowStyle+'"';
+
+    return '<tr '+clickFn+'>'+strikeTd+sintTd+callTd+putTd+rdtoTd+tnaTd+'</tr>';
   }).join('');
 
-  el.innerHTML='<table class="cc-tbl">'
+  el.innerHTML='<table class="cc-tbl" style="font-size:11px">'
     +'<thead><tr>'
-      +'<th>Strike</th><th>Costo</th><th>Call (vta)</th><th>Put (cpa)</th><th>Rdto</th><th>TNA</th>'
+      +'<th>Strike</th>'
+      +'<th title="Call - Put (last negociado)">Sint\u00e9tica<br><span style="font-weight:400;font-size:9px">Call - Put</span></th>'
+      +'<th>Call</th>'
+      +'<th>Put</th>'
+      +'<th title="Rendimiento C&C = K/Costo - 1">Rdto<br><span style="font-weight:400;font-size:9px">C&amp;C</span></th>'
+      +'<th title="TNA Cash & Carry = (K/Costo-1)x365/DTE">TNA<br><span style="font-weight:400;font-size:9px">C&amp;C</span></th>'
     +'</tr></thead>'
     +'<tbody>'+rowsHtml+'</tbody>'
     +'</table>'
-    +'<div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.5">'
-      +'TLR: '+(rf*100).toFixed(2)+'% · DTE: '+dte+' · Precios: last negociado. Click en fila = cargar sintética.'
+    +'<div style="font-size:9px;color:var(--t3);margin-top:8px;line-height:1.6">'
+      +'TLR: '+(rf*100).toFixed(2)+'% \u00b7 DTE: '+dte+' d \u00b7 '
+      +'<span style="color:var(--gold2)">\u25a0 TNA &gt; TLR</span> \u00b7 '
+      +'<span style="color:var(--g2)">\u25a0 Sint\u00e9tica m\u00e1s barata</span> \u00b7 '
+      +'<span style="color:var(--r2)">\u25a0 m\u00e1s cara</span> \u00b7 '
+      +'Click = cargar estrategia'
     +'</div>';
 }
 
@@ -3610,17 +3783,45 @@ function buildNetPositions(){
     var g=groups[key];
     var lot=g.lot;
 
-    // Net qty — round to avoid float issues (10-5-5 = 0, not 1e-15)
-    var netQty=Math.round(g.legs.reduce(function(s,l){return s+l.qty;},0)*1e6)/1e6;
+    // ── CICLOS: separar el historial en ciclos de apertura/cierre ──
+    // Cada vez que el neto acumulado llega a 0, se cierra un ciclo.
+    // Las patas que siguen pertenecen a un nuevo ciclo (nueva posición).
+    // El PPP solo se calcula sobre las patas del ciclo actual (abierto).
+    var cycles=[];
+    var currentCycle=[];
+    var runningQty=0;
+    g.legs.forEach(function(l){
+      currentCycle.push(l);
+      runningQty=Math.round((runningQty+l.qty)*1e6)/1e6;
+      if(Math.abs(runningQty)<1e-4){
+        // Ciclo cerrado
+        cycles.push({legs:currentCycle.slice(),netQty:0});
+        currentCycle=[];
+        runningQty=0;
+      }
+    });
+    // Si quedó algo sin cerrar, es el ciclo activo
+    if(currentCycle.length){
+      cycles.push({legs:currentCycle.slice(),netQty:runningQty});
+    }
 
-    // Realized PnL = sum of cashflows (buy = pay = negative, sell = receive = positive)
-    // cashflow per leg = -premium_neta * qty * lot
-    var realizedPnl=g.legs.reduce(function(s,l){
-      return s + (-l.premium * l.qty * (g._isStock?1:lot));
-    },0);
+    // PnL realizado = suma de cashflows de todos los ciclos cerrados
+    var realizedPnl=0;
+    cycles.forEach(function(cyc){
+      if(Math.abs(cyc.netQty)<1e-4){
+        realizedPnl+=cyc.legs.reduce(function(s,l){
+          return s+(-l.premium*l.qty*(g._isStock?1:lot));
+        },0);
+      }
+    });
+
+    // Ciclo activo (último si tiene netQty != 0)
+    var lastCyc=cycles[cycles.length-1];
+    var netQty=lastCyc?Math.round(lastCyc.netQty*1e6)/1e6:0;
+    var activelegs=lastCyc&&Math.abs(netQty)>=1e-4?lastCyc.legs:[];
 
     if(Math.abs(netQty)<1e-4){
-      // CLOSED: net qty is effectively zero
+      // CLOSED
       closedPositions.push({
         key:key, type:g.type, strike:g.strike, exp:g.exp,
         _isStock:g._isStock, lot:lot,
@@ -3628,24 +3829,20 @@ function buildNetPositions(){
         legs:g.legs
       });
     } else {
-      // OPEN: PPC = weighted avg of BUY legs only (if net long)
-      //        PPV = weighted avg of SELL legs only (if net short)
-      var buyLegs=g.legs.filter(function(l){return l.qty>0;});
-      var sellLegs=g.legs.filter(function(l){return l.qty<0;});
+      // OPEN: PPP calculado SOLO sobre las patas del ciclo activo
+      var buyLegs=activelegs.filter(function(l){return l.qty>0;});
+      var sellLegs=activelegs.filter(function(l){return l.qty<0;});
       var totalBuyQty=buyLegs.reduce(function(s,l){return s+l.qty;},0);
       var totalSellQty=sellLegs.reduce(function(s,l){return s+Math.abs(l.qty);},0);
 
-      // PPC neto (prima neta, lo que realmente pagaste/cobraste con comisiones)
       var ppcNeto=netQty>0
         ? (totalBuyQty>0 ? buyLegs.reduce(function(s,l){return s+l.premium*l.qty;},0)/totalBuyQty : 0)
         : (totalSellQty>0 ? sellLegs.reduce(function(s,l){return s+l.premium*Math.abs(l.qty);},0)/totalSellQty : 0);
 
-      // PPC bruto (prima bruta antes de comisiones)
       var ppcBruto=netQty>0
         ? (totalBuyQty>0 ? buyLegs.reduce(function(s,l){return s+(l._primaRaw||l.premium)*l.qty;},0)/totalBuyQty : 0)
         : (totalSellQty>0 ? sellLegs.reduce(function(s,l){return s+(l._primaRaw||l.premium)*Math.abs(l.qty);},0)/totalSellQty : 0);
 
-      // Label: PPC (long) or PPV (short)
       var ppcLabel=netQty>0?'PPC':'PPV';
 
       openPositions.push({
@@ -3657,7 +3854,8 @@ function buildNetPositions(){
         ppcLabel:ppcLabel,
         totalBuyQty:totalBuyQty,
         totalSellQty:totalSellQty,
-        legs:g.legs
+        legs:activelegs,
+        realizedPnlFromPriorCycles:realizedPnl
       });
     }
   });
@@ -3695,21 +3893,20 @@ function renderLegsPanel(){
         ?'<span style="color:var(--t3)">P&L: s/d</span>'
         :'<span style="color:'+(unrealPnl>=0?'var(--g2)':'var(--r2)')+';font-weight:700">P&L: '+(unrealPnl>=0?'+':'')+cs+unrealPnl.toFixed(2)+'</span>';
 
-      var inputId='cp_'+posIdx;
+      var posKeyEsc=pos.key.replace(/['"\\]/g,'');
       return '<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:6px 8px;margin-bottom:5px">'
         +'<div style="display:flex;align-items:center;justify-content:space-between;gap:4px;flex-wrap:wrap">'
           +'<span style="font-size:11px;font-family:var(--mono);font-weight:700">'
             +'<span style="color:'+sideClr+'">'+sideLabel+'</span>'
-            +' '+Math.abs(pos.netQty)+(pos._isStock?'':' c.')
             +' '+(pos._isStock?'ACC':pos.type.toUpperCase())+' $'+pos.strike
           +'</span>'
-          +'<div style="display:flex;gap:4px;align-items:center">'
-            +'<input type="number" id="'+inputId+'" placeholder="px cierre" '
-            +'style="width:72px;background:var(--bg4);border:1px solid var(--bdr2);color:var(--t);padding:2px 5px;border-radius:4px;font-size:10px;font-family:var(--mono)">'
-            +'<button onclick="closePosInSim('+posIdx+')" '
-            +'style="background:none;border:1px solid var(--rbdr);color:var(--r2);font-size:9px;padding:1px 6px;border-radius:3px;cursor:pointer">Cerrar</button>'
+          +'<div style="display:flex;gap:6px;align-items:center">'
+            +'<label style="font-size:9px;color:var(--t3);font-family:var(--mono)">Cant:</label>'
+            +'<input type="number" value="'+pos.netQty+'" '
+            +'onchange="updatePosQty(this,\''+posKeyEsc+'\')" '
+            +'style="width:58px;background:var(--bg4);border:1px solid var(--bdr2);color:'+(pos.netQty>0?'var(--g2)':'var(--r2)')+';padding:2px 5px;border-radius:4px;font-size:11px;font-family:var(--mono);font-weight:700;text-align:center">'
             +'<button onclick="removePosByKey('+posIdx+')" '
-            +'style="background:none;border:none;color:var(--t3);font-size:11px;cursor:pointer;padding:0 2px">×</button>'
+            +'style="background:none;border:none;color:var(--t3);font-size:13px;cursor:pointer;padding:0 3px" title="Eliminar">×</button>'
           +'</div>'
         +'</div>'
         +'<div style="font-size:10px;font-family:var(--mono);color:var(--t3);margin-top:3px;display:flex;gap:10px;flex-wrap:wrap">'
@@ -3726,15 +3923,20 @@ function renderLegsPanel(){
     }).join('');
   }
 
-  // ── CERRADAS: solo PnL total ──
-  if(closedPos.length){
+  // ── CERRADAS: PnL total (ciclos 100% cerrados + ciclos previos de posiciones aún abiertas) ──
+  // PnL de posiciones completamente cerradas
+  var totalPnlClosed=closedPos.reduce(function(s,p){return s+p.realizedPnl;},0);
+  // PnL de ciclos previos de posiciones que ahora tienen un nuevo ciclo abierto
+  var totalPnlPrior=openPos.reduce(function(s,p){return s+(p.realizedPnlFromPriorCycles||0);},0);
+  var totalPnl=totalPnlClosed+totalPnlPrior;
+  var hasClosed=closedPos.length>0||totalPnlPrior!==0;
+  if(hasClosed){
     closedHdr.style.display='';
-    var totalPnl=closedPos.reduce(function(s,p){return s+p.realizedPnl;},0);
     var pnlClr=totalPnl>=0?'var(--g2)':'var(--r2)';
     closedEl.innerHTML='<div style="background:var(--bg3);border:1px solid var(--bdr);border-radius:6px;padding:8px 10px;font-family:var(--mono);font-size:11px">'
       +'<div style="color:var(--t3);font-size:9px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">PnL realizado (posiciones cerradas)</div>'
       +'<div style="font-size:15px;font-weight:800;color:'+pnlClr+'">'+(totalPnl>=0?'+':'')+cs+totalPnl.toFixed(2)+'</div>'
-      +'<div style="font-size:9px;color:var(--t3);margin-top:3px">'+closedPos.length+' posici'+(closedPos.length===1?'ón':'ones')+' cerrada'+(closedPos.length===1?'':'s')+'</div>'
+      +(closedPos.length?'<div style="font-size:9px;color:var(--t3);margin-top:3px">'+closedPos.length+' posici'+(closedPos.length===1?'\u00f3n':'ones')+' cerrada'+(closedPos.length===1?'':'s')+'</div>':'')
     +'</div>';
   } else {
     closedHdr.style.display='none';
@@ -3752,6 +3954,41 @@ function renderLegsPanel(){
   if(btnUpd) btnUpd.style.display=_activeStratId?"":"none";
   redrawLegs();
   try{renderStrategy();}catch(e){console.warn('renderStrategy:',e);}
+}
+
+// Edit net qty of an open position by adjusting the last active cycle
+function updatePosQty(inputEl, posKey){
+  var newQty=parseFloat(inputEl.value);
+  if(isNaN(newQty)||newQty===0){alert('Ingres\u00e1 una cantidad v\u00e1lida (distinta de 0).');renderLegsPanel();return;}
+  var g={legs:legs.filter(function(l){
+    var _sk=parseFloat(l.strike);
+    var _skStr=(_sk%1===0)?_sk.toFixed(0):_sk.toFixed(2);
+    return (l._isStock?'stock':l.type)+':'+_skStr+':'+l.exp===posKey;
+  })};
+  var currentCycle=[];
+  var runningQty=0;
+  g.legs.forEach(function(l){
+    currentCycle.push(l);
+    runningQty=Math.round((runningQty+l.qty)*1e6)/1e6;
+    if(Math.abs(runningQty)<1e-4){currentCycle=[];runningQty=0;}
+  });
+  var activeCycleLegs=currentCycle;
+  if(!activeCycleLegs.length){renderLegsPanel();return;}
+  var curNet=Math.round(activeCycleLegs.reduce(function(s,l){return s+l.qty;},0)*1e6)/1e6;
+  var delta=newQty-curNet;
+  if(Math.abs(delta)<1e-4){return;}
+  var refLeg=activeCycleLegs[0];
+  legCnt++;
+  legs.push({
+    id:legCnt,type:refLeg.type,strike:refLeg.strike,exp:refLeg.exp,
+    qty:delta,
+    premium:refLeg.premium,
+    _primaRaw:refLeg._primaRaw||refLeg.premium,
+    lot:refLeg.lot,_isStock:refLeg._isStock||false,
+    _comTotal:refLeg._comTotal||0,
+    _isQtyAdj:true
+  });
+  renderLegsPanel();
 }
 
 // Remove all legs belonging to a net position key
@@ -4022,6 +4259,25 @@ function loadCashCarry(K, callP, putP){
   setTimeout(function(){toast.style.opacity='0';toast.style.transition='opacity .4s';setTimeout(function(){toast.remove();},400);},2500);
 }
 
+
+// Ctrl+Z: eliminar última orden cargada
+document.addEventListener('keydown', function(e){
+  if((e.ctrlKey||e.metaKey) && e.key==='z'){
+    // Solo actuar si el foco no está en un input/textarea (para no interferir con edición)
+    var tag = document.activeElement ? document.activeElement.tagName : '';
+    if(tag==='INPUT'||tag==='TEXTAREA'||tag==='SELECT') return;
+    e.preventDefault();
+    if(!legs.length) return;
+    legs.pop();
+    renderLegsPanel();
+    // Toast feedback
+    var toast=document.createElement('div');
+    toast.style.cssText='position:fixed;bottom:80px;right:24px;z-index:9999;background:rgba(239,68,68,.9);color:#fff;font-family:var(--sans);font-size:12px;font-weight:700;padding:8px 16px;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.4)';
+    toast.textContent='↩ Última orden eliminada';
+    document.body.appendChild(toast);
+    setTimeout(function(){toast.style.opacity='0';toast.style.transition='opacity .3s';setTimeout(function(){toast.remove();},300);},1500);
+  }
+});
 
 // Boot
 loadPortfolioFromStorage();
