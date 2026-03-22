@@ -837,13 +837,37 @@ function parseDDMMYYYY(s){
 
 // ── USA CSV parser (standard comma, same as before) ──
 function parseUSAcsv(txt){
+  // Parser que respeta campos quoted (ej: "2026-03-16 16:28:51+00:00")
+  function splitCSVLine(line){
+    var result=[],cur='',inq=false;
+    for(var i=0;i<line.length;i++){
+      var c=line[i];
+      if(c==='"'){inq=!inq;}
+      else if(c===','&&!inq){result.push(cur.trim());cur='';}
+      else{cur+=c;}
+    }
+    result.push(cur.trim());
+    return result;
+  }
   const lines=txt.trim().split('\n');
-  const hdr=lines[0].split(',').map(h=>h.trim());
-  return lines.slice(1).filter(l=>l.trim()).map(function(line){
-    const cols=line.split(','),o={};
-    hdr.forEach(function(h,i){o[h]=(cols[i]||'').trim();});
+  const hdr=splitCSVLine(lines[0]).map(function(h){return h.replace(/"/g,'').trim();});
+  // Log header para debug
+  console.log('[parseUSAcsv] headers:', hdr);
+  var result = lines.slice(1).filter(function(l){return l.trim();}).map(function(line){
+    var cols=splitCSVLine(line),o={};
+    hdr.forEach(function(h,i){
+      var v=(cols[i]||'').replace(/"/g,'').trim();
+      o[h]=v;
+    });
+    // Mapear pct_change → percentChange (el CSV real usa pct_change)
+    if(o.pct_change!==undefined&&o.percentChange===undefined) o.percentChange=o.pct_change;
+    // Normalizar: vacío o no numérico → '0'
+    if(o.percentChange===undefined||o.percentChange===''||o.percentChange==='N/A'||o.percentChange==='null')
+      o.percentChange='0';
     return o;
   });
+  if(result.length) console.log('[parseUSAcsv] sample row percentChange:', result[0].percentChange, '| change:', result[0].change);
+  return result;
 }
 
 // ── GGAL CSV parser: messy format, quoted fields, AR numbers ──
@@ -1209,7 +1233,7 @@ function fP(v){
 function fV(v){const n=parseFloat(v);return isNaN(n)?'<span class="na">-</span>':n.toLocaleString('es-AR',{maximumFractionDigits:0});}
 function fPct(v){
   const n=parseFloat(v);
-  if(isNaN(n)) return '<span class="na">-</span>';
+  if(isNaN(n)||v===''||v===null) return '<span class="na">-</span>';
   return '<span class="'+(n>0?'chgp':n<0?'chgn':'na')+'">'+(n>0?'+':'')+n.toFixed(1)+'%</span>';
 }
 function ivChip(iv){
