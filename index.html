@@ -2616,7 +2616,7 @@ function renderPortfolio(){
       var _realPnl=0;
       _cycles.forEach(function(cyc){
         if(Math.abs(cyc.netQty)<1e-4)
-          _realPnl+=cyc.legs.reduce(function(s,l){return s+(-l.openPrice*(l.qty||0)*(g._isStock?1:lot));},0);
+          _realPnl+=Math.round(cyc.legs.reduce(function(s,l){return s+(-l.openPrice*(l.qty||0)*(g._isStock?1:lot));},0)*1e4)/1e4;
       });
       _closedPnl+=_realPnl;
       // Ciclo activo
@@ -2630,8 +2630,8 @@ function renderPortfolio(){
         var tBQ=buyLegs.reduce(function(s,l){return s+l.qty;},0);
         var tSQ=sellLegs.reduce(function(s,l){return s+Math.abs(l.qty);},0);
         var ppcNeto=netQty>0
-          ?(tBQ>0?buyLegs.reduce(function(s,l){return s+l.openPrice*l.qty;},0)/tBQ:0)
-          :(tSQ>0?sellLegs.reduce(function(s,l){return s+l.openPrice*Math.abs(l.qty);},0)/tSQ:0);
+          ?(tBQ>0?Math.round(buyLegs.reduce(function(s,l){return s+l.openPrice*l.qty;},0)/tBQ*1e6)/1e6:0)
+          :(tSQ>0?Math.round(sellLegs.reduce(function(s,l){return s+l.openPrice*Math.abs(l.qty);},0)/tSQ*1e6)/1e6:0);
         var ppcBruto=netQty>0
           ?(tBQ>0?buyLegs.reduce(function(s,l){return s+(l._primaRaw||l.openPrice)*l.qty;},0)/tBQ:0)
           :(tSQ>0?sellLegs.reduce(function(s,l){return s+(l._primaRaw||l.openPrice)*Math.abs(l.qty);},0)/tSQ:0);
@@ -2681,19 +2681,24 @@ function renderPortfolio(){
       }
       if(!isNaN(cp)&&cp>0){
         // P&L abierto = (last - PPC_neto) x qty_neta x lot
-        _unrealPnl+=(cp-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot);
+        var _diff=Math.round((cp-pos.ppcNeto)*1e6)/1e6;
+        _unrealPnl+=Math.round(_diff*pos.netQty*(pos._isStock?1:pos.lot)*1e4)/1e4;
       } else {
         _unrealValid=false;
       }
     });
     // P&L total = cerradas (flujo neto) + abiertas (last vs PPC)
-    var sPnL=_closedPnl+_unrealPnl;
+    var sPnL=Math.round((_closedPnl+_unrealPnl)*100)/100;
     var sPnLValid=_openPos.every(function(pos){
-      if(pos._isStock){var _m=marketData[strat.ticker];return _m&&_m.last>0;}
+      if(pos._isStock){
+        if(currentData.spot>0&&currentData.ticker===strat.ticker) return true;
+        var _m=marketData[strat.ticker];return _m&&_m.last>0;
+      }
       return rawData.some(function(r){
+        var _lp=parseFloat(r.lastPrice);
         return r.ticker===strat.ticker&&r.type===pos.type
-          &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1&&r.expiration===pos.exp
-          &&parseFloat(r.lastPrice)>0;
+          &&Math.abs(parseFloat(r.strike)-pos.strike)<0.1
+          &&(!isNaN(_lp)&&_lp>0);
       });
     });
     var pnlClr=sPnL>=0?'var(--g2)':'var(--r2)';
@@ -2707,44 +2712,6 @@ function renderPortfolio(){
     }
     if(!stratSpot&&strat.legs.length)
       stratSpot=strat.legs.reduce(function(s,l){return s+(parseFloat(l.strike)||0);},0)/strat.legs.length;
-    // Mini payoff rows
-    var miniPayoffRows=(function(){
-      if(!stratSpot) return '<tr><td colspan="4" style="padding:6px 8px;color:var(--t3);text-align:center">Sin spot para '+strat.ticker+'</td></tr>';
-      var rng=0.20,steps=9,rows='';
-      var maxPay=0;
-      var pays=[];
-      for(var _i=0;_i<steps;_i++){
-        var _S=stratSpot*(1-rng)+stratSpot*2*rng*_i/(steps-1);
-        var _pay=strat.legs.reduce(function(sum,leg){
-          var _K=parseFloat(leg.strike),_q=leg.qty,_pr=leg.openPrice,_lot=leg.lot||100;
-          if(leg.type==='stock'){return sum+(_S-_K)*_q;}
-          var _intr=leg.type==='call'?Math.max(0,_S-_K):Math.max(0,_K-_S);
-          return sum+(_intr-_pr)*_q*_lot;
-        },0);
-        pays.push({S:_S,pay:_pay});
-        if(Math.abs(_pay)>maxPay) maxPay=Math.abs(_pay);
-      }
-      pays.forEach(function(pt){
-        var _S=pt.S,_pay=pt.pay;
-        var _var=(_S/stratSpot-1)*100;
-        var _isCurr=Math.abs(_S-stratSpot)<stratSpot*2*rng/(steps-1)*0.55;
-        var _bg=_isCurr?'background:rgba(6,182,212,.1);':'';
-        var _pc=_pay>=0?'var(--g2)':'var(--r2)';
-        var _sp=stratSpot>500?_S.toFixed(0):_S.toFixed(2);
-        var _barW=maxPay>0?Math.round(Math.min(100,Math.abs(_pay)/maxPay*100)):0;
-        rows+='<tr style="'+_bg+'border-bottom:1px solid rgba(255,255,255,.02)">'
-          +'<td style="padding:3px 8px;text-align:left;color:'+(_isCurr?'var(--accent)':'var(--t)')+(_isCurr?';font-weight:700':'')+'">'+cs+_sp+'</td>'
-          +'<td style="padding:3px 8px;text-align:left;color:'+(_var>=0?'var(--g2)':'var(--r2)')+'">'+(_var>=0?'+':'')+_var.toFixed(1)+'%</td>'
-          +'<td style="padding:3px 8px;text-align:right;font-weight:'+(_isCurr?'700':'400')+';color:'+_pc+'">'+(_pay>=0?'+':'')+cs+_pay.toFixed(2)+'</td>'
-          +'<td style="padding:3px 8px;text-align:right">'
-            +'<div style="height:5px;background:var(--bg4);border-radius:3px;width:70px;display:inline-block;vertical-align:middle">'
-              +'<div style="height:100%;border-radius:3px;background:'+_pc+';width:'+_barW+'%"></div>'
-            +'</div>'
-          +'</td>'
-          +'</tr>';
-      });
-      return rows;
-    })();
 
     // ── Per-strategy greeks (uses rawData IV + stratSpot) ──
     var stratGreeks=(function(){
@@ -2899,7 +2866,7 @@ function renderPortfolio(){
           }
         }
       }
-      var unreal2=cp2!==null?(cp2-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot):NaN;
+      var unreal2=cp2!==null?Math.round((cp2-pos.ppcNeto)*pos.netQty*(pos._isStock?1:pos.lot)*100)/100:NaN;
       var pnlStr2=isNaN(unreal2)?'-'
         :'<span style="color:'+(unreal2>=0?'var(--g2)':'var(--r2)')+'">'+( unreal2>=0?'+':'')+cs+unreal2.toFixed(2)+'</span>';
       legsHtml+='<tr>'
@@ -2965,18 +2932,6 @@ function renderPortfolio(){
         +'</div>'
       +'</div>'
       +gHtml
-      +'<div style="padding:0 14px 12px">'
-        +'<div style="font-size:9px;color:var(--t3);text-transform:uppercase;letter-spacing:.06em;font-weight:700;margin:12px 0 8px">Payoff a vencimiento &mdash; '+strat.ticker+' spot: '+cs+(stratSpot>0?stratSpot.toLocaleString('es-AR',{maximumFractionDigits:0}):'?')+'</div>'
-        +'<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:10px;font-family:var(--mono);min-width:380px">'
-          +'<thead><tr>'
-            +'<th style="padding:3px 8px;text-align:left;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Precio</th>'
-            +'<th style="padding:3px 8px;text-align:left;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Var%</th>'
-            +'<th style="padding:3px 8px;text-align:right;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">P&L Vto</th>'
-            +'<th style="padding:3px 8px;text-align:right;color:var(--t3);border-bottom:1px solid var(--bdr);font-size:9px;background:var(--bg3)">Barra</th>'
-          +'</tr></thead>'
-          +'<tbody>'+miniPayoffRows+'</tbody>'
-        +'</table></div>'
-      +'</div>'
       +'<div style="padding:0 14px 14px">'
         +'<div class="sc-legs-wrap">'
           +'<table class="sc-legs-tbl">'
